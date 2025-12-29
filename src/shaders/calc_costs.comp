@@ -1,0 +1,184 @@
+#version 450
+#extension GL_KHR_shader_subgroup_basic : enable
+
+layout(local_size_x = 32, local_size_y = 4, local_size_z = 1) in;
+
+layout(binding = 0) buffer SrcBuffer { float src[]; };
+layout(binding = 1) buffer CostBuffer { float cost[]; };
+layout(binding = 2) buffer BmaskBuffer { uint bmask[]; };
+
+layout(push_constant) uniform EEDI3Params {
+    int width;
+    int height;
+    int mdis;
+    int tpitch;
+    float alpha;
+    float beta;
+    float gamma;
+    float remainingWeight;
+    int cost3;
+    int ucubic;
+    int has_mclip;
+    int nrad;
+    int field;
+    int stride;
+    int dh;
+} p;
+
+shared float s_rows[4][4 * (32 + 2 * 43 + 2 + 1)];  // max halo = mdis*2 + nrad
+
+int mirror_x(int i, int size) {
+    int i_abs = abs(i);
+    if (i_abs >= size) {
+        i_abs = 2 * size - 2 - i_abs;
+    }
+    return clamp(i_abs, 0, size - 1);
+}
+
+int get_clamped_y_row_index(int y_target, int h_src, int field_parity, int size, bool dh) {
+    int fy = (y_target - field_parity) >> 1;
+    int limit_h = dh ? (size >> 1) : (size - field_parity + 1) >> 1;
+
+    int i = fy;
+    if (i < 0) {
+        i = (field_parity == 0) ? -i : -1 - i;
+    } else if (i >= limit_h) {
+        i = (field_parity == 0) ? (2 * limit_h - 1 - i) : (2 * limit_h - 2 - i);
+    }
+    i = clamp(i, 0, limit_h - 1);
+
+    if (dh) return i;
+    return i * 2 + field_parity;
+}
+
+void main() {
+    int halo = ((p.cost3 != 0) ? 2 * p.mdis : p.mdis) + p.nrad;
+    int sw = 32 + 2 * halo + 1;
+
+    int t_x = int(gl_LocalInvocationID.x);
+    int t_y = int(gl_LocalInvocationID.y);
+    int y = p.field + int(gl_GlobalInvocationID.y) * 2;
+
+    if (y < p.height) {
+        int ref_field = 1 - p.field;
+        int src_h = p.height;
+        int stride = p.stride;
+        bool dh = (p.dh != 0);
+
+        int r_m3 = get_clamped_y_row_index(y - 3, src_h, ref_field, src_h, dh);
+        int r_m1 = get_clamped_y_row_index(y - 1, src_h, ref_field, src_h, dh);
+        int r_p1 = get_clamped_y_row_index(y + 1, src_h, ref_field, src_h, dh);
+        int r_p3 = get_clamped_y_row_index(y + 3, src_h, ref_field, src_h, dh);
+
+        int group_base_x = int(gl_WorkGroupID.x) * 32;
+
+        for (int k = t_x; k < sw; k += 32) {
+            int global_read_x = group_base_x - halo + k;
+            int ix = mirror_x(global_read_x, p.width);
+
+            s_rows[0][t_y * sw + k] = src[r_m3 * stride + ix];
+            s_rows[1][t_y * sw + k] = src[r_m1 * stride + ix];
+            s_rows[2][t_y * sw + k] = src[r_p1 * stride + ix];
+            s_rows[3][t_y * sw + k] = src[r_p3 * stride + ix];
+        }
+    }
+
+    barrier();
+    memoryBarrierShared();
+
+    uint gid_x = gl_GlobalInvocationID.x;
+    uint gid_y = gl_GlobalInvocationID.y;
+
+    if (gid_x >= p.width || y >= p.height) return;
+
+    int s_center = halo + t_x;
+    int x = int(gid_x);
+
+    bool use_eedi3 = true;
+    if (p.has_mclip != 0) {
+        use_eedi3 = (bmask[gid_y * p.width + gid_x] != 0);
+    }
+
+    int umax = min(min(x, p.width - 1 - x), p.mdis);
+
+    for (int u_idx = 0; u_idx < p.tpitch; ++u_idx) {
+        int u = u_idx - p.mdis;
+
+        if (!use_eedi3 || abs(u) > umax) {
+            cost[gid_y * p.width * p.tpitch + x * p.tpitch + u_idx] = 3.402823466e+38;
+            continue;
+        }
+
+        float s0 = 0.0;
+        for (int k = -p.nrad; k <= p.nrad; ++k) {
+            float val_3p = s_rows[0][t_y * sw + s_center + u + k];
+            float val_1p_neg = s_rows[1][t_y * sw + s_center - u + k];
+            float val_1p_pos = s_rows[1][t_y * sw + s_center + u + k];
+            float val_1n_neg = s_rows[2][t_y * sw + s_center - u + k];
+            float val_1n_pos = s_rows[2][t_y * sw + s_center + u + k];
+            float val_3n = s_rows[3][t_y * sw + s_center - u + k];
+
+            s0 += abs(val_3p - val_1p_neg) + abs(val_1p_pos - val_1n_neg) +
+                  abs(val_1n_pos - val_3n);
+        }
+
+        float final_s = s0;
+
+        if (p.cost3 != 0) {
+            int u2 = u * 2;
+            float s1 = -3.402823466e+38;
+            float s2 = -3.402823466e+38;
+
+            bool s1_valid = (u >= 0 && x >= u2) || (u <= 0 && x < p.width + u2);
+            if (s1_valid) {
+                float temp_s1 = 0.0;
+                for (int k = -p.nrad; k <= p.nrad; ++k) {
+                    float v_3p = s_rows[0][t_y * sw + s_center + k];
+                    float v_1p = s_rows[1][t_y * sw + s_center - u2 + k];
+                    float v_1p_c = s_rows[1][t_y * sw + s_center + k];
+                    float v_1n = s_rows[2][t_y * sw + s_center - u2 + k];
+                    float v_1n_c = s_rows[2][t_y * sw + s_center + k];
+                    float v_3n = s_rows[3][t_y * sw + s_center - u2 + k];
+
+                    temp_s1 += abs(v_3p - v_1p) + abs(v_1p_c - v_1n) +
+                               abs(v_1n_c - v_3n);
+                }
+                s1 = temp_s1;
+            }
+
+            bool s2_valid = (u <= 0 && x >= -u2) || (u >= 0 && x < p.width + u2);
+            if (s2_valid) {
+                float temp_s2 = 0.0;
+                for (int k = -p.nrad; k <= p.nrad; ++k) {
+                    float v_3p = s_rows[0][t_y * sw + s_center + u2 + k];
+                    float v_1p = s_rows[1][t_y * sw + s_center + k];
+                    float v_1p_c = s_rows[1][t_y * sw + s_center + u2 + k];
+                    float v_1n = s_rows[2][t_y * sw + s_center + k];
+                    float v_1n_c = s_rows[2][t_y * sw + s_center + u2 + k];
+                    float v_3n = s_rows[3][t_y * sw + s_center + k];
+
+                    temp_s2 += abs(v_3p - v_1p) + abs(v_1p_c - v_1n) +
+                               abs(v_1n_c - v_3n);
+                }
+                s2 = temp_s2;
+            }
+
+            float val_s1 = (s1 > -3.3e38) ? s1 : ((s2 > -3.3e38) ? s2 : s0);
+            float val_s2 = (s2 > -3.3e38) ? s2 : ((val_s1 > -3.3e38) ? val_s1 : s0);
+
+            final_s += val_s1 + val_s2;
+        }
+
+        float ip_p1 = s_rows[1][t_y * sw + s_center + u];
+        float ip_n1 = s_rows[2][t_y * sw + s_center - u];
+        float ip = (ip_p1 + ip_n1) * 0.5;
+
+        float src_p = s_rows[1][t_y * sw + s_center];
+        float src_n = s_rows[2][t_y * sw + s_center];
+
+        float v = abs(src_p - ip) + abs(src_n - ip);
+
+        cost[gid_y * p.width * p.tpitch + x * p.tpitch + u_idx] =
+            p.alpha * final_s + p.beta * float(abs(u)) + p.remainingWeight * v;
+    }
+}

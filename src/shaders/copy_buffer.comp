@@ -1,0 +1,21 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+layout(binding = 0) buffer SrcBuffer { uint src[]; };
+layout(binding = 1) buffer DstBuffer { uint dst[]; };
+
+layout(push_constant) uniform Params {
+    uint src_stride;
+    uint dst_stride;
+    uint width_bytes;
+} params;
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+
+    if (x >= params.width_bytes) return;
+
+    dst[y * params.dst_stride + x] = src[y * params.src_stride + x];
+}

@@ -1,0 +1,97 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) buffer SrcBuffer { float src[]; };
+layout(binding = 1) buffer DstBuffer { float dst[]; };
+layout(binding = 2) buffer DmapBuffer { int dmap[]; };
+layout(binding = 3) buffer BmaskBuffer { uint bmask[]; };
+
+layout(push_constant) uniform EEDI3Params {
+    int width;
+    int height;
+    int mdis;
+    int ucubic;
+    int has_mclip;
+    int field;
+    int stride;
+    int dh;
+} p;
+
+int mirror_x(int i, int size) {
+    int i_abs = abs(i);
+    if (i_abs >= size) {
+        i_abs = 2 * size - 2 - i_abs;
+    }
+    return clamp(i_abs, 0, size - 1);
+}
+
+int get_clamped_y_row_index(int y_target, int h_src, int field_parity, int size, bool dh) {
+    int fy = (y_target - field_parity) >> 1;
+    int limit_h = dh ? (size >> 1) : (size - field_parity + 1) >> 1;
+
+    int i = fy;
+    if (i < 0) {
+        i = (field_parity == 0) ? -i : -1 - i;
+    } else if (i >= limit_h) {
+        i = (field_parity == 0) ? (2 * limit_h - 1 - i) : (2 * limit_h - 2 - i);
+    }
+    i = clamp(i, 0, limit_h - 1);
+
+    if (dh) return i;
+    return i * 2 + field_parity;
+}
+
+void main() {
+    uint gid_x = gl_GlobalInvocationID.x;
+    uint gid_y = gl_GlobalInvocationID.y;
+
+    if (gid_x >= p.width) return;
+
+    int y = p.field + int(gid_y) * 2;
+    if (y >= p.height) return;
+
+    int x = int(gid_x);
+    int ref_field = 1 - p.field;
+    int src_h = p.height;
+    int stride = p.stride;
+    bool dh = (p.dh != 0);
+
+    int r_m1 = get_clamped_y_row_index(y - 1, src_h, ref_field, src_h, dh);
+    int r_p1 = get_clamped_y_row_index(y + 1, src_h, ref_field, src_h, dh);
+
+    int dir;
+    int dmap_idx = int(gid_y) * p.width + x;
+
+    if (p.has_mclip != 0 && bmask[dmap_idx] == 0) {
+        dir = 0;
+    } else {
+        dir = dmap[dmap_idx];
+    }
+
+    dmap[dmap_idx] = dir;
+
+    float val = 0.0;
+
+    float p1 = src[r_m1 * stride + mirror_x(x + dir, p.width)];
+    float p2 = src[r_p1 * stride + mirror_x(x - dir, p.width)];
+
+    int dir3 = dir * 3;
+    int absDir3 = abs(dir3);
+
+    if (p.ucubic != 0 && x >= absDir3 && x <= p.width - 1 - absDir3) {
+        int r_m3 = get_clamped_y_row_index(y - 3, src_h, ref_field, src_h, dh);
+        int r_p3 = get_clamped_y_row_index(y + 3, src_h, ref_field, src_h, dh);
+
+        float p0 = src[r_m3 * stride + mirror_x(x + dir3, p.width)];
+        float p3 = src[r_p3 * stride + mirror_x(x - dir3, p.width)];
+
+        float sum_inner = p1 + p2;
+        float sum_outer = p0 + p3;
+        val = 0.5625 * sum_inner - 0.0625 * sum_outer;
+    } else {
+        val = 0.5 * (p1 + p2);
+    }
+
+    dst[y * stride + x] = val;
+}

@@ -1,0 +1,68 @@
+#version 450
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_shader_subgroup_shuffle : enable
+
+layout(local_size_x = 32, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) buffer MclipBuffer { float mclip[]; };
+layout(binding = 1) buffer BmaskBuffer { uint bmask[]; };  // bool as uint
+
+layout(push_constant) uniform Params {
+    int width;
+    int height;
+    int mdis;
+    int field;
+    int stride;
+    int dh;
+} params;
+
+shared float shared_row[16 * (32 + 2 * 40 + 1)];  // max mdis = 40
+
+void main() {
+    uint gid_x = gl_GlobalInvocationID.x;
+    uint gid_y = gl_GlobalInvocationID.y;
+    uint tid_x = gl_LocalInvocationID.x;
+    uint tid_y = gl_LocalInvocationID.y;
+    uint tg_pos_x = gl_WorkGroupID.x;
+
+    int mdis = params.mdis;
+    int halo = mdis;
+    int sw = 32 + 2 * halo + 1;
+
+    int group_start_x = int(tg_pos_x) * 32;
+
+    uint src_y;
+    if (params.dh != 0) {
+        src_y = gid_y;
+    } else {
+        src_y = uint(params.field) + gid_y * 2;
+    }
+
+    bool valid_row = (src_y < uint(params.height));
+
+    for (int k = int(tid_x); k < sw; k += 32) {
+        int global_x = group_start_x - halo + k;
+        float val = 0.0;
+        if (valid_row && global_x >= 0 && global_x < params.width) {
+            val = mclip[src_y * params.stride + global_x];
+        }
+        shared_row[tid_y * sw + k] = val;
+    }
+
+    barrier();
+    memoryBarrierShared();
+
+    if (gid_x >= params.width || !valid_row) return;
+
+    bool mask = false;
+    int center = halo + int(tid_x);
+
+    for (int k = -mdis; k <= mdis; ++k) {
+        if (shared_row[tid_y * sw + center + k] != 0.0) {
+            mask = true;
+            break;
+        }
+    }
+
+    bmask[gid_y * params.width + gid_x] = mask ? 1u : 0u;
+}

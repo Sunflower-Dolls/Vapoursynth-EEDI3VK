@@ -1,0 +1,14 @@
+.DS_Store
+.cache/
+build/
+builddir/
+cpu-impl/
+*.png
+*.bin
+*.gputrace
+*.py
+subprojects/packagecache
+subprojects/.wraplock
+subprojects/volk/
+subprojects/vulkan-headers/
+subprojects/vulkan-memory-allocator/

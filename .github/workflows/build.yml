@@ -1,0 +1,97 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'R*'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  PIP_CACHE_DIR: ${{ github.workspace }}/.pip-cache
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          cache: true
+          msystem: MINGW64
+          install: >-
+            base-devel
+            ccache
+            git
+            ninja
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-lld
+            mingw-w64-x86_64-llvm
+            mingw-w64-x86_64-vulkan-headers
+            mingw-w64-x86_64-vulkan-loader
+            mingw-w64-x86_64-shaderc
+            mingw-w64-x86_64-vapoursynth
+
+      - name: Configure Meson
+        shell: msys2 {0}
+        run: |
+          export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
+          mkdir -p "$CCACHE_DIR"
+          
+          CC="ccache clang -fuse-ld=lld" CXX="ccache clang++ -fuse-ld=lld" meson setup build \
+            --buildtype=release \
+            -Dc_link_args="-static" \
+            -Dcpp_link_args="-static"
+
+      - name: Build
+        shell: msys2 {0}
+        run: ninja -C build
+      
+      - name: Check dependencies
+        shell: msys2 {0}
+        run: ldd build/*.dll
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-amd64
+          path: build/*.dll
+
+  release:
+    needs: [build-windows]
+    if: startsWith(github.ref, 'refs/tags/R')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Archive artifacts
+        run: |
+          cd artifacts
+          zip -r ../release-windows-amd64.zip release-windows-amd64
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-windows-amd64.zip

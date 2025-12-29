@@ -1,0 +1,167 @@
+#version 450
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_shader_subgroup_shuffle : enable
+#extension GL_KHR_shader_subgroup_shuffle_relative : enable
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+
+layout(constant_id = 0) const int local_size_x_k = 32;
+layout(constant_id = 1) const int STATES_PER_THREAD = 3;
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) buffer CostBuffer { float cost[]; };
+layout(binding = 1) buffer DmapBuffer { int dmap[]; };
+layout(binding = 2) buffer PbacktBuffer { int pbackt[]; };  // int8_t as int
+layout(binding = 3) buffer BmaskBuffer { uint bmask[]; };
+
+layout(push_constant) uniform EEDI3Params {
+    int width;
+    int height;
+    int mdis;
+    int tpitch;
+    float gamma;
+    int has_mclip;
+} p;
+
+void main() {
+    int y_idx = int(gl_WorkGroupID.y);
+    int tid = int(gl_LocalInvocationID.x);
+
+    float s_prev[STATES_PER_THREAD];
+    float s_curr[STATES_PER_THREAD];
+
+    for (int k = 0; k < STATES_PER_THREAD; ++k) {
+        s_prev[k] = 0.0;
+    }
+
+    for (int x = 0; x < p.width; ++x) {
+        bool use_eedi3 = true;
+        if (p.has_mclip != 0) {
+            use_eedi3 = (bmask[y_idx * p.width + x] != 0);
+        }
+
+        float cost_data[STATES_PER_THREAD];
+        for (int k = 0; k < STATES_PER_THREAD; ++k) {
+            int u_idx = tid + k * int(gl_SubgroupSize);
+            if (u_idx < p.tpitch) {
+                cost_data[k] = cost[y_idx * p.width * p.tpitch + x * p.tpitch + u_idx];
+            } else {
+                cost_data[k] = 3.402823466e+38;
+            }
+        }
+
+        float min_val[STATES_PER_THREAD];
+        int best_offset[STATES_PER_THREAD];
+
+        if (x == 0) {
+            for (int k = 0; k < STATES_PER_THREAD; ++k) {
+                int u_idx = tid + k * int(gl_SubgroupSize);
+                min_val[k] = (u_idx < p.tpitch) ? 0.0 : 3.402823466e+38;
+                best_offset[k] = 0;
+            }
+        } else if (use_eedi3) {
+            for (int k = 0; k < STATES_PER_THREAD; ++k) {
+                int u_idx = tid + k * int(gl_SubgroupSize);
+                float c = s_prev[k];
+                float l = 3.402823466e+38;
+                float r = 3.402823466e+38;
+
+                if (tid > 0) {
+                    l = subgroupShuffleUp(c, 1);
+                } else if (k > 0) {
+                    l = subgroupShuffle(s_prev[k - 1], gl_SubgroupSize - 1);
+                }
+
+                if (tid < gl_SubgroupSize - 1) {
+                    r = subgroupShuffleDown(c, 1);
+                } else if (k < STATES_PER_THREAD - 1) {
+                    r = subgroupShuffle(s_prev[k + 1], 0);
+                }
+
+                if (u_idx >= p.tpitch) {
+                    min_val[k] = 3.402823466e+38;
+                    best_offset[k] = 0;
+                    continue;
+                }
+
+                float best_c = c;
+                int best_d = 0;
+
+                if (u_idx - 1 >= 0 && l < 3.4e+38) {
+                    float val = l + p.gamma;
+                    if (val < best_c) {
+                        best_c = val;
+                        best_d = -1;
+                    }
+                }
+
+                if (u_idx + 1 < p.tpitch && r < 3.4e+38) {
+                    float val = r + p.gamma;
+                    if (val < best_c) {
+                        best_c = val;
+                        best_d = 1;
+                    }
+                }
+
+                min_val[k] = best_c;
+                best_offset[k] = best_d;
+            }
+        } else {
+            for (int k = 0; k < STATES_PER_THREAD; ++k) {
+                int u_idx = tid + k * int(gl_SubgroupSize);
+                min_val[k] = (u_idx < p.tpitch) ? s_prev[k] : 3.402823466e+38;
+                best_offset[k] = 0;
+            }
+        }
+
+        float row_min = 3.402823466e+38;
+
+        for (int k = 0; k < STATES_PER_THREAD; ++k) {
+            int u_idx = tid + k * int(gl_SubgroupSize);
+
+            if (u_idx >= p.tpitch) {
+                s_curr[k] = 3.402823466e+38;
+                continue;
+            }
+
+            float total_cost;
+            if (use_eedi3) {
+                total_cost = min_val[k] + cost_data[k];
+                total_cost = min(total_cost, 3.4e+38 * 0.9);
+            } else {
+                total_cost = min_val[k];
+            }
+
+            s_curr[k] = total_cost;
+            pbackt[y_idx * p.width * p.tpitch + x * p.tpitch + u_idx] = best_offset[k];
+
+            row_min = min(row_min, total_cost);
+        }
+
+        row_min = subgroupMin(row_min);
+
+        for (int k = 0; k < STATES_PER_THREAD; ++k) {
+            int u_idx = tid + k * int(gl_SubgroupSize);
+            if (u_idx < p.tpitch) {
+                if (s_curr[k] < 3.4e+38 * 0.9) {
+                    s_curr[k] -= row_min;
+                }
+                s_prev[k] = s_curr[k];
+            } else {
+                s_prev[k] = 3.402823466e+38;
+            }
+        }
+    }
+
+    // Backtracking
+    if (tid == 0) {
+        int best_idx = p.mdis;
+        dmap[y_idx * p.width + p.width - 1] = 0;
+
+        for (int x = p.width - 2; x >= 0; --x) {
+            int offset = pbackt[y_idx * p.width * p.tpitch + (x + 1) * p.tpitch + best_idx];
+            best_idx += offset;
+            dmap[y_idx * p.width + x] = best_idx - p.mdis;
+        }
+    }
+}

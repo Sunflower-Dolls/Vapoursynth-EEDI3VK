@@ -1,0 +1,31 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) buffer SrcBuffer { float src[]; };
+layout(binding = 1) buffer DstBuffer { float dst[]; };
+
+layout(push_constant) uniform Params {
+    int width;
+    int height;
+    int field;
+    int stride;
+    int dh;
+} params;
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+
+    if (x >= params.width) return;
+
+    int target_field = 1 - params.field;
+    int dst_y = target_field + int(y) * 2;
+
+    if (dst_y >= params.height) return;
+
+    uint src_y = (params.dh != 0) ? y : uint(dst_y);
+
+    float val = src[src_y * params.stride + x];
+    dst[dst_y * params.stride + x] = val;
+}
