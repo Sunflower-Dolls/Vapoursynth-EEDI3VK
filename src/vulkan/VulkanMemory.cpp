@@ -6,9 +6,12 @@
 
 #include <volk.h>
 
+// NOLINTBEGIN(cppcoreguidelines-macro-usage,cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
 #define VMA_IMPLEMENTATION
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
+// NOLINTEND(cppcoreguidelines-macro-usage,cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
+
 #include <vk_mem_alloc.h>
 
 namespace eedi3vk {
@@ -62,7 +65,7 @@ VulkanBuffer VulkanMemory::createGPUBuffer(VkDeviceSize size,
     alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
     VkBuffer buffer = nullptr;
-    VmaAllocation allocation;
+    VmaAllocation allocation = nullptr;
     VmaAllocationInfo allocation_info;
 
     if (vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer,
@@ -87,7 +90,7 @@ VulkanBuffer VulkanMemory::createStagingBuffer(VkDeviceSize size,
                        VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
     VkBuffer buffer = nullptr;
-    VmaAllocation allocation;
+    VmaAllocation allocation = nullptr;
     VmaAllocationInfo allocation_info;
 
     if (vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer,

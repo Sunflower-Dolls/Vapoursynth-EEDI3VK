@@ -2,6 +2,7 @@
 #define EEDI3VK_SHADERS_HPP
 
 #include <cstdint>
+#include <span>
 
 // NOLINTBEGIN(modernize-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
 
@@ -36,7 +37,6 @@ inline constexpr uint8_t copy_buffer_spv[] = {
 
 #pragma clang diagnostic pop
 
-// Helper to get span of uint32_t for Vulkan API
 inline std::span<const uint32_t> getCopyFieldSpv() {
     return {reinterpret_cast<const uint32_t*>(copy_field_spv),
             sizeof(copy_field_spv) / sizeof(uint32_t)};

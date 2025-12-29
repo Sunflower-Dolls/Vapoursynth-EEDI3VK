@@ -58,6 +58,11 @@ class DescriptorPool {
                    std::span<const vk::DescriptorPoolSize> pool_sizes);
     ~DescriptorPool() = default;
 
+    DescriptorPool(const DescriptorPool&) = delete;
+    DescriptorPool& operator=(const DescriptorPool&) = delete;
+    DescriptorPool(DescriptorPool&&) = default;
+    DescriptorPool& operator=(DescriptorPool&&) = delete;
+
     vk::raii::DescriptorSet allocateSet(vk::DescriptorSetLayout layout);
     void reset();
 

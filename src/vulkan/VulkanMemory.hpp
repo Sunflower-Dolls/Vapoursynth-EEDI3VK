@@ -3,9 +3,8 @@
 
 #define VK_NO_PROTOTYPES
 
-// NOLINTBEGIN(cppcoreguidelines-macro-usage,cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage,cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
-// NOLINTEND(cppcoreguidelines-macro-usage,cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
 
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_raii.hpp>

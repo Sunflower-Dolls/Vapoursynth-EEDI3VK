@@ -261,7 +261,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
         }
 
         for (int plane = 0; plane < d->vi.format.numPlanes; plane++) {
-            if (!d->process[plane]) {
+            if (!d->process.at(plane)) {
                 const uint8_t* srcp = vsapi->getReadPtr(src, plane);
                 uint8_t* dstp = vsapi->getWritePtr(dst, plane);
                 int src_stride = static_cast<int>(vsapi->getStride(src, plane));
@@ -597,7 +597,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
             const auto* staging_ptr =
                 static_cast<const uint8_t*>(res.dst_staging.getMappedData());
             uint8_t* dst_ptr = vsapi->getWritePtr(dst, plane);
-            int dst_stride = static_cast<int>(vsapi->getStride(dst, plane));
+            auto dst_stride = vsapi->getStride(dst, plane);
 
             for (int y = 0; y < dst_height; y++) {
                 std::memcpy(dst_ptr + (y * dst_stride),
@@ -624,7 +624,8 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
 
                 auto* aligned_dst_ptr =
                     reinterpret_cast<float*>(vsapi->getWritePtr(dst, plane)) +
-                    (dst_stride / sizeof(float) * field_n);
+                    (static_cast<ptrdiff_t>(dst_stride / sizeof(float)) *
+                     field_n);
 
                 const int* dmap_ptr =
                     static_cast<const int*>(res.dmap_staging.getMappedData());
@@ -636,16 +637,19 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
 
                 const float* aligned_scpp = nullptr;
                 if (scp != nullptr) {
-                    aligned_scpp = reinterpret_cast<const float*>(
-                                       vsapi->getReadPtr(scp, plane)) +
-                                   (dst_stride / sizeof(float) * field_n);
+                    aligned_scpp =
+                        reinterpret_cast<const float*>(
+                            vsapi->getReadPtr(scp, plane)) +
+                        (static_cast<ptrdiff_t>(dst_stride / sizeof(float)) *
+                         field_n);
                 }
 
                 std::vector<float> tline(dst_width);
 
                 vCheck(aligned_src_ptr, aligned_scpp, aligned_dst_ptr, dmap_ptr,
                        tline.data(), field_n, dst_width, padded_height,
-                       pad_stride_pixels, dst_stride / sizeof(float), d);
+                       pad_stride_pixels,
+                       static_cast<ptrdiff_t>(dst_stride / sizeof(float)), d);
 
                 vsapi->freeFrame(pad);
                 if (scp != nullptr) {
@@ -806,7 +810,7 @@ void VS_CC eedi3Create(const VSMap* in, VSMap* out,
             const auto* frame = vsapi->getFrame(0, d->node, nullptr, 0);
 
             for (int plane = 0; plane < d->vi.format.numPlanes; plane++) {
-                if (d->process[plane] &&
+                if (d->process.at(plane) &&
                     ((vsapi->getFrameHeight(frame, plane) & 1) != 0)) {
                     vsapi->freeFrame(frame);
                     throw "plane's height must be mod 2 when dh=False"s;
