@@ -355,6 +355,10 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                                 plane_width * sizeof(float));
                 }
 
+                vmaFlushAllocation(vk_d->memory->getAllocator(),
+                                   res.src_staging.allocation, 0,
+                                   plane_size_bytes);
+
                 vk::BufferCopy copy_region{0, 0, plane_size_bytes};
                 res.command_buffer.copyBuffer(
                     res.src_staging.buffer, res.src_buffer.buffer, copy_region);
@@ -372,6 +376,10 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                                 mclip_ptr + (y * mclip_stride),
                                 plane_width * sizeof(float));
                 }
+
+                vmaFlushAllocation(vk_d->memory->getAllocator(),
+                                   res.mclip_staging.allocation, 0,
+                                   plane_size_bytes);
 
                 vk::BufferCopy copy_region{0, 0, plane_size_bytes};
                 res.command_buffer.copyBuffer(res.mclip_staging.buffer,

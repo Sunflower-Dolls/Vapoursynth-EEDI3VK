@@ -83,29 +83,27 @@ VulkanBuffer VulkanMemory::createStagingBuffer(VkDeviceSize size,
     buffer_info.size = size;
     buffer_info.usage = for_upload ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT
                                    : VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VmaAllocationCreateInfo alloc_info = {};
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-    if (for_upload) {
-        alloc_info.flags =
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-            VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    } else {
+    alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                       VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    if (!for_upload) {
         alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
                            VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        alloc_info.requiredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
     }
 
-    VkBuffer buffer = nullptr;
-    VmaAllocation allocation = nullptr;
-    VmaAllocationInfo allocation_info;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VmaAllocationInfo allocation_info = {};
 
     if (vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer,
                         &allocation, &allocation_info) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create staging buffer");
     }
 
-    return VulkanBuffer(buffer, allocation, allocation_info, size);
+    return {buffer, allocation, allocation_info, size};
 }
 
 void VulkanMemory::destroyBuffer(VulkanBuffer& buffer) {
@@ -121,6 +119,7 @@ void VulkanMemory::uploadToBuffer(VulkanBuffer& gpu_buffer, const void* data,
                                   VkDeviceSize size, VkDeviceSize offset) {
     auto staging = createStagingBuffer(size, true);
     std::memcpy(staging.getMappedData(), data, size);
+    vmaFlushAllocation(allocator, staging.allocation, 0, size);
 
     transfer_cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
     vk::BufferCopy copy_region{0, offset, size};
