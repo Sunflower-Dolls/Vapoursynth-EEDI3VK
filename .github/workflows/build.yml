@@ -54,10 +54,10 @@ jobs:
           export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
           mkdir -p "$CCACHE_DIR"
           
-          CC="ccache clang -fuse-ld=lld" CXX="ccache clang++ -fuse-ld=lld" meson setup build \
+          CC="ccache clang -fuse-ld=lld -pthread" CXX="ccache clang++ -fuse-ld=lld -pthread" meson setup build \
             --buildtype=release \
-            -Dc_link_args="-static" \
-            -Dcpp_link_args="-static"
+            -Dc_link_args="-static -pthread" \
+            -Dcpp_link_args="-static -pthread"
 
       - name: Build
         shell: msys2 {0}

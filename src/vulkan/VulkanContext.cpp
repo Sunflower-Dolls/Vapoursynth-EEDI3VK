@@ -44,12 +44,14 @@ VulkanContext& VulkanContext::getInstance(int device_id) {
 VulkanContext::VulkanContext(int device_id)
     : device_id(device_id), instance(nullptr) {
 
-    static std::once_flag volk_init_flag;
-    std::call_once(volk_init_flag, []() {
-        if (volkInitialize() != VK_SUCCESS) {
-            throw std::runtime_error("Failed to initialize volk");
+    struct VolkInit {
+        VolkInit() {
+            if (volkInitialize() != VK_SUCCESS) {
+                throw std::runtime_error("Failed to initialize volk");
+            }
         }
-    });
+    };
+    static VolkInit volk_initer;
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
