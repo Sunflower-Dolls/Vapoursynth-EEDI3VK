@@ -14,6 +14,7 @@ layout(push_constant) uniform Params {
     int field;
     int stride;
     int dh;
+    float mclip_offset;
 } params;
 
 shared float shared_row[16 * (32 + 2 * 40 + 1)];  // max mdis = 40
@@ -58,7 +59,7 @@ void main() {
     int center = halo + int(tid_x);
 
     for (int k = -mdis; k <= mdis; ++k) {
-        if (shared_row[tid_y * sw + center + k] != 0.0) {
+        if (shared_row[tid_y * sw + center + k] - params.mclip_offset != 0.0) {
             mask = true;
             break;
         }

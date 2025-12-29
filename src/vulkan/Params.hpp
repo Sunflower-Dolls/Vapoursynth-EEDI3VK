@@ -63,6 +63,7 @@ struct DilateMaskParams {
     int32_t field;
     int32_t stride;
     int32_t dh;
+    float mclip_offset;
 };
 
 // copy_buffer.comp

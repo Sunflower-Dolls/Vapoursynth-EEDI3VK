@@ -423,6 +423,9 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                 params.field = field_n;
                 params.stride = vk_d->vk_stride_pixels;
                 params.dh = d->dh ? 1 : 0;
+                params.mclip_offset =
+                    (d->vi.format.colorFamily == cfYUV && plane > 0) ? 0.5F
+                                                                     : 0.0F;
 
                 dispatch(vk_d->pipelines->getDilateMask(), divUp(dst_width, 32),
                          divUp(field_height, 16), 1, &params, sizeof(params));
