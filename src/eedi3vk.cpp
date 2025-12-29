@@ -200,6 +200,23 @@ inline void vCheck(const float* srcp, const float* scpp,
 
 inline uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
+void updateDescriptorSet(vk::Device device, vk::DescriptorSet set,
+                         std::span<const vk::Buffer> buffers) {
+    std::vector<vk::DescriptorBufferInfo> buffer_infos;
+    buffer_infos.reserve(buffers.size());
+    for (auto buffer : buffers) {
+        buffer_infos.emplace_back(buffer, 0, VK_WHOLE_SIZE);
+    }
+    std::vector<vk::WriteDescriptorSet> writes;
+    writes.reserve(buffers.size());
+    for (size_t i = 0; i < buffers.size(); ++i) {
+        writes.emplace_back(set, static_cast<uint32_t>(i), 0, 1,
+                            vk::DescriptorType::eStorageBuffer, nullptr,
+                            &buffer_infos[i]);
+    }
+    device.updateDescriptorSets(writes, nullptr);
+}
+
 const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                                    void* instanceData,
                                    [[maybe_unused]] void** frameData,
@@ -287,118 +304,39 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
             size_t dst_size_bytes = vk_d->vk_stride * dst_height;
 
             if (res.descriptor_sets.empty()) {
-                // Initialize descriptor sets
-                std::vector<vk::WriteDescriptorSet> writes;
+                auto& device = vk_d->context->getDevice();
 
-                // CopyField
-                {
-                    auto desc_set = vk_d->pipelines->allocateCopyFieldSet(
-                        *res.descriptor_pool);
+                auto add_set = [&](vk::raii::DescriptorSet&& set,
+                                   std::span<const vk::Buffer> buffers) {
+                    updateDescriptorSet(*device, *set, buffers);
+                    res.descriptor_sets.push_back(std::move(set));
+                };
 
-                    vk::DescriptorBufferInfo src_info{res.src_buffer.buffer, 0,
-                                                      VK_WHOLE_SIZE};
-                    vk::DescriptorBufferInfo dst_info{res.dst_buffer.buffer, 0,
-                                                      VK_WHOLE_SIZE};
-
-                    std::array<vk::DescriptorBufferInfo, 2> buffer_infos = {
-                        {src_info, dst_info}};
-                    std::array<vk::WriteDescriptorSet, 2> set_writes = {{
-                        {*desc_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data()},
-                        {*desc_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 1},
-                    }};
-                    vk_d->context->getDevice().updateDescriptorSets(set_writes,
-                                                                    nullptr);
-                    res.descriptor_sets.push_back(std::move(desc_set));
-                }
+                add_set(
+                    vk_d->pipelines->allocateCopyFieldSet(*res.descriptor_pool),
+                    {{res.src_buffer.buffer, res.dst_buffer.buffer}});
 
                 if (mclip != nullptr) {
-                    auto desc_set = vk_d->pipelines->allocateDilateMaskSet(
-                        *res.descriptor_pool);
-                    std::array<vk::DescriptorBufferInfo, 2> buffer_infos = {{
-                        {res.mclip_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.bmask_buffer.buffer, 0, VK_WHOLE_SIZE},
-                    }};
-                    std::array<vk::WriteDescriptorSet, 2> set_writes = {{
-                        {*desc_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data()},
-                        {*desc_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 1},
-                    }};
-                    vk_d->context->getDevice().updateDescriptorSets(set_writes,
-                                                                    nullptr);
-                    res.descriptor_sets.push_back(std::move(desc_set));
+                    add_set(
+                        vk_d->pipelines->allocateDilateMaskSet(
+                            *res.descriptor_pool),
+                        {{res.mclip_buffer.buffer, res.bmask_buffer.buffer}});
                 }
 
-                {
-                    auto desc_set = vk_d->pipelines->allocateCalcCostsSet(
-                        *res.descriptor_pool);
-                    std::array<vk::DescriptorBufferInfo, 3> buffer_infos = {{
-                        {res.src_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.cost_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.bmask_buffer.buffer, 0, VK_WHOLE_SIZE},
-                    }};
-                    std::array<vk::WriteDescriptorSet, 3> set_writes = {{
-                        {*desc_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data()},
-                        {*desc_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 1},
-                        {*desc_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 2},
-                    }};
-                    vk_d->context->getDevice().updateDescriptorSets(set_writes,
-                                                                    nullptr);
-                    res.descriptor_sets.push_back(std::move(desc_set));
-                }
+                add_set(
+                    vk_d->pipelines->allocateCalcCostsSet(*res.descriptor_pool),
+                    {{res.src_buffer.buffer, res.cost_buffer.buffer,
+                      res.bmask_buffer.buffer}});
 
-                {
-                    auto desc_set = vk_d->pipelines->allocateViterbiScanSet(
-                        *res.descriptor_pool);
-                    std::array<vk::DescriptorBufferInfo, 4> buffer_infos = {{
-                        {res.cost_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.dmap_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.pbackt_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.bmask_buffer.buffer, 0, VK_WHOLE_SIZE},
-                    }};
-                    std::array<vk::WriteDescriptorSet, 4> set_writes = {{
-                        {*desc_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data()},
-                        {*desc_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 1},
-                        {*desc_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 2},
-                        {*desc_set, 3, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 3},
-                    }};
-                    vk_d->context->getDevice().updateDescriptorSets(set_writes,
-                                                                    nullptr);
-                    res.descriptor_sets.push_back(std::move(desc_set));
-                }
+                add_set(vk_d->pipelines->allocateViterbiScanSet(
+                            *res.descriptor_pool),
+                        {{res.cost_buffer.buffer, res.dmap_buffer.buffer,
+                          res.pbackt_buffer.buffer, res.bmask_buffer.buffer}});
 
-                {
-                    auto desc_set = vk_d->pipelines->allocateInterpolateSet(
-                        *res.descriptor_pool);
-                    std::array<vk::DescriptorBufferInfo, 4> buffer_infos = {{
-                        {res.src_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.dst_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.dmap_buffer.buffer, 0, VK_WHOLE_SIZE},
-                        {res.bmask_buffer.buffer, 0, VK_WHOLE_SIZE},
-                    }};
-                    std::array<vk::WriteDescriptorSet, 4> set_writes = {{
-                        {*desc_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data()},
-                        {*desc_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 1},
-                        {*desc_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 2},
-                        {*desc_set, 3, 0, 1, vk::DescriptorType::eStorageBuffer,
-                         nullptr, buffer_infos.data() + 3},
-                    }};
-                    vk_d->context->getDevice().updateDescriptorSets(set_writes,
-                                                                    nullptr);
-                    res.descriptor_sets.push_back(std::move(desc_set));
-                }
+                add_set(vk_d->pipelines->allocateInterpolateSet(
+                            *res.descriptor_pool),
+                        {{res.src_buffer.buffer, res.dst_buffer.buffer,
+                          res.dmap_buffer.buffer, res.bmask_buffer.buffer}});
             }
 
             res.command_buffer.reset({});
@@ -451,6 +389,18 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
 
             int set_idx = 0;
 
+            auto dispatch = [&](eedi3vk::VulkanComputePipeline& pipeline,
+                                uint32_t gx, uint32_t gy, uint32_t gz,
+                                const void* params, size_t params_size) {
+                pipeline.dispatch(res.command_buffer,
+                                  *res.descriptor_sets[set_idx++], gx, gy, gz,
+                                  params, static_cast<uint32_t>(params_size));
+                res.command_buffer.pipelineBarrier(
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eComputeShader, {}, barrier,
+                    nullptr, nullptr);
+            };
+
             {
                 eedi3vk::CopyFieldParams params{};
                 params.width = dst_width;
@@ -460,16 +410,10 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                 params.dh = d->dh ? 1 : 0;
 
                 int copy_field_height = (dst_height - (1 - field_n) + 1) / 2;
-                vk_d->pipelines->getCopyField().dispatch(
-                    res.command_buffer, *res.descriptor_sets[set_idx++],
-                    divUp(dst_width, 16), divUp(copy_field_height, 16), 1,
-                    &params, sizeof(params));
+                dispatch(vk_d->pipelines->getCopyField(), divUp(dst_width, 16),
+                         divUp(copy_field_height, 16), 1, &params,
+                         sizeof(params));
             }
-
-            res.command_buffer.pipelineBarrier(
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eComputeShader, {}, barrier, nullptr,
-                nullptr);
 
             if (mclip != nullptr) {
                 eedi3vk::DilateMaskParams params{};
@@ -480,15 +424,8 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                 params.stride = vk_d->vk_stride_pixels;
                 params.dh = d->dh ? 1 : 0;
 
-                vk_d->pipelines->getDilateMask().dispatch(
-                    res.command_buffer, *res.descriptor_sets[set_idx++],
-                    divUp(dst_width, 32), divUp(field_height, 16), 1, &params,
-                    sizeof(params));
-
-                res.command_buffer.pipelineBarrier(
-                    vk::PipelineStageFlagBits::eComputeShader,
-                    vk::PipelineStageFlagBits::eComputeShader, {}, barrier,
-                    nullptr, nullptr);
+                dispatch(vk_d->pipelines->getDilateMask(), divUp(dst_width, 32),
+                         divUp(field_height, 16), 1, &params, sizeof(params));
             }
 
             {
@@ -509,16 +446,9 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                 params.stride = vk_d->vk_stride_pixels;
                 params.dh = d->dh ? 1 : 0;
 
-                vk_d->pipelines->getCalcCosts().dispatch(
-                    res.command_buffer, *res.descriptor_sets[set_idx++],
-                    divUp(dst_width, 32), divUp(field_height, 4), 1, &params,
-                    sizeof(params));
+                dispatch(vk_d->pipelines->getCalcCosts(), divUp(dst_width, 32),
+                         divUp(field_height, 4), 1, &params, sizeof(params));
             }
-
-            res.command_buffer.pipelineBarrier(
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eComputeShader, {}, barrier, nullptr,
-                nullptr);
 
             {
                 eedi3vk::ViterbiScanParams params{};
@@ -529,15 +459,9 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                 params.gamma = d->gamma;
                 params.has_mclip = (mclip != nullptr) ? 1 : 0;
 
-                vk_d->pipelines->getViterbiScan().dispatch(
-                    res.command_buffer, *res.descriptor_sets[set_idx++], 1,
-                    field_height, 1, &params, sizeof(params));
+                dispatch(vk_d->pipelines->getViterbiScan(), 1, field_height, 1,
+                         &params, sizeof(params));
             }
-
-            res.command_buffer.pipelineBarrier(
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eComputeShader, {}, barrier, nullptr,
-                nullptr);
 
             {
                 eedi3vk::InterpolateParams params{};
@@ -550,10 +474,9 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                 params.stride = vk_d->vk_stride_pixels;
                 params.dh = d->dh ? 1 : 0;
 
-                vk_d->pipelines->getInterpolate().dispatch(
-                    res.command_buffer, *res.descriptor_sets[set_idx++],
-                    divUp(dst_width, 16), divUp(field_height, 16), 1, &params,
-                    sizeof(params));
+                dispatch(vk_d->pipelines->getInterpolate(),
+                         divUp(dst_width, 16), divUp(field_height, 16), 1,
+                         &params, sizeof(params));
             }
 
             vk::MemoryBarrier readback_barrier{
