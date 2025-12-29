@@ -866,7 +866,7 @@ void VS_CC eedi3Create(const VSMap* in, VSMap* out,
 VS_EXTERNAL_API(void)
 VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* vspapi) {
     vspapi->configPlugin("com.yuygfgg.eedi3vk", "eedi3vk", "EEDI3 Vulkan Port",
-                         VS_MAKE_VERSION(1, 2), VAPOURSYNTH_API_VERSION, 0,
+                         VS_MAKE_VERSION(1, 3), VAPOURSYNTH_API_VERSION, 0,
                          plugin);
     vspapi->registerFunction("EEDI3",
                              "clip:vnode;"
