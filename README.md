@@ -2,8 +2,6 @@
 
 Ported from [VapourSynth-EEDI3](https://github.com/HomeOfVapourSynthEvolution/VapourSynth-EEDI3).
 
-Apple Silicon users may check [Vapoursynth-EEDI3METAL](https://github.com/Sunflower-Dolls/Vapoursynth-EEDI3METAL) for a faster version.
-
 EEDI3 works by finding the best non-decreasing (non-crossing) warping between two lines by minimizing a cost functional. The cost is based on neighborhood similarity (favor connecting regions that look similar), the vertical difference created by the interpolated values (favor small differences), the interpolation directions (favor short connections vs long), and the change in interpolation direction from pixel to pixel (favor small changes).
 
 Ported from AviSynth plugin http://bengal.missouri.edu/~kes25c/ and http://ldesoras.free.fr/prod.html#src_eedi3
