@@ -115,7 +115,7 @@ class ResourceHolder {
 class VulkanResourcePool {
   public:
     VulkanResourcePool(VulkanContext& ctx, VulkanMemory& memory,
-                       int num_threads, size_t vk_stride, int max_width,
+                       int num_streams, size_t vk_stride, int max_width,
                        int max_height, int tpitch, bool has_mclip);
     ~VulkanResourcePool();
 

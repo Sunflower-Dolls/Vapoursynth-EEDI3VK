@@ -7,6 +7,8 @@ layout(binding = 0) buffer SrcBuffer { float src[]; };
 layout(binding = 1) buffer CostBuffer { float cost[]; };
 layout(binding = 2) buffer BmaskBuffer { uint bmask[]; };
 
+const float FLT_MAX = 3.402823466e+38;
+
 layout(push_constant) uniform EEDI3Params {
     int width;
     int height;
@@ -105,7 +107,7 @@ void main() {
         int u = u_idx - p.mdis;
 
         if (!use_eedi3 || abs(u) > umax) {
-            cost[gid_y * p.width * p.tpitch + x * p.tpitch + u_idx] = 3.402823466e+38;
+            cost[gid_y * p.width * p.tpitch + x * p.tpitch + u_idx] = FLT_MAX;
             continue;
         }
 
@@ -126,8 +128,8 @@ void main() {
 
         if (p.cost3 != 0) {
             int u2 = u * 2;
-            float s1 = -3.402823466e+38;
-            float s2 = -3.402823466e+38;
+            float s1 = -FLT_MAX;
+            float s2 = -FLT_MAX;
 
             bool s1_valid = (u >= 0 && x >= u2) || (u <= 0 && x < p.width + u2);
             if (s1_valid) {
@@ -163,8 +165,11 @@ void main() {
                 s2 = temp_s2;
             }
 
-            float val_s1 = (s1 > -3.3e38) ? s1 : ((s2 > -3.3e38) ? s2 : s0);
-            float val_s2 = (s2 > -3.3e38) ? s2 : ((val_s1 > -3.3e38) ? val_s1 : s0);
+            bool s1_is_valid = s1 > -FLT_MAX * 0.9f;
+            bool s2_is_valid = s2 > -FLT_MAX * 0.9f;
+
+            float val_s1 = s1_is_valid ? s1 : (s2_is_valid ? s2 : s0);
+            float val_s2 = s2_is_valid ? s2 : val_s1;
 
             final_s += val_s1 + val_s2;
         }
@@ -179,6 +184,6 @@ void main() {
         float v = abs(src_p - ip) + abs(src_n - ip);
 
         cost[gid_y * p.width * p.tpitch + x * p.tpitch + u_idx] =
-            p.alpha * final_s + p.beta * float(abs(u)) + p.remainingWeight * v;
+            fma(p.alpha, final_s, fma(p.beta, float(abs(u)), p.remainingWeight * v));
     }
 }

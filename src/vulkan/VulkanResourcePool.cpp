@@ -11,15 +11,15 @@ ResourceHolder::ResourceHolder(VulkanResourcePool& p)
 ResourceHolder::~ResourceHolder() { pool.release(std::move(resource)); }
 
 VulkanResourcePool::VulkanResourcePool(VulkanContext& ctx, VulkanMemory& mem,
-                                       int num_threads, size_t vk_stride,
+                                       int num_streams, size_t vk_stride,
                                        int max_width, int max_height,
                                        int tpitch, bool has_mclip)
-    : context(ctx), memory(mem), semaphore(num_threads) {
+    : context(ctx), memory(mem), semaphore(num_streams) {
 
     int max_field_height = (max_height + 1) / 2;
     size_t plane_size_bytes = vk_stride * max_height;
 
-    for (int i = 0; i < num_threads; ++i) {
+    for (int i = 0; i < num_streams; ++i) {
         vk::CommandPoolCreateInfo pool_info{
             vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
             context.getQueueFamilyIndex()};

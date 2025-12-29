@@ -7,13 +7,14 @@
 layout(constant_id = 0) const int local_size_x_k = 32;
 layout(constant_id = 1) const int STATES_PER_THREAD = 3;
 
+const float FLT_MAX = 3.402823466e+38;
+
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0) buffer CostBuffer { float cost[]; };
 layout(binding = 1) buffer DmapBuffer { int dmap[]; };
 layout(binding = 2) buffer PbacktBuffer { int pbackt[]; };  // int8_t as int
 layout(binding = 3) buffer BmaskBuffer { uint bmask[]; };
-
 layout(push_constant) uniform EEDI3Params {
     int width;
     int height;
@@ -46,7 +47,7 @@ void main() {
             if (u_idx < p.tpitch) {
                 cost_data[k] = cost[y_idx * p.width * p.tpitch + x * p.tpitch + u_idx];
             } else {
-                cost_data[k] = 3.402823466e+38;
+                cost_data[k] = FLT_MAX;
             }
         }
 
@@ -56,15 +57,15 @@ void main() {
         if (x == 0) {
             for (int k = 0; k < STATES_PER_THREAD; ++k) {
                 int u_idx = tid + k * int(gl_SubgroupSize);
-                min_val[k] = (u_idx < p.tpitch) ? 0.0 : 3.402823466e+38;
+                min_val[k] = (u_idx < p.tpitch) ? 0.0 : FLT_MAX;
                 best_offset[k] = 0;
             }
         } else if (use_eedi3) {
             for (int k = 0; k < STATES_PER_THREAD; ++k) {
                 int u_idx = tid + k * int(gl_SubgroupSize);
                 float c = s_prev[k];
-                float l = 3.402823466e+38;
-                float r = 3.402823466e+38;
+                float l = FLT_MAX;
+                float r = FLT_MAX;
 
                 if (tid > 0) {
                     l = subgroupShuffleUp(c, 1);
@@ -79,7 +80,7 @@ void main() {
                 }
 
                 if (u_idx >= p.tpitch) {
-                    min_val[k] = 3.402823466e+38;
+                    min_val[k] = FLT_MAX;
                     best_offset[k] = 0;
                     continue;
                 }
@@ -87,7 +88,7 @@ void main() {
                 float best_c = c;
                 int best_d = 0;
 
-                if (u_idx - 1 >= 0 && l < 3.4e+38) {
+                if (u_idx - 1 >= 0 && l < FLT_MAX) {
                     float val = l + p.gamma;
                     if (val < best_c) {
                         best_c = val;
@@ -95,7 +96,7 @@ void main() {
                     }
                 }
 
-                if (u_idx + 1 < p.tpitch && r < 3.4e+38) {
+                if (u_idx + 1 < p.tpitch && r < FLT_MAX) {
                     float val = r + p.gamma;
                     if (val < best_c) {
                         best_c = val;
@@ -109,25 +110,25 @@ void main() {
         } else {
             for (int k = 0; k < STATES_PER_THREAD; ++k) {
                 int u_idx = tid + k * int(gl_SubgroupSize);
-                min_val[k] = (u_idx < p.tpitch) ? s_prev[k] : 3.402823466e+38;
+                min_val[k] = (u_idx < p.tpitch) ? s_prev[k] : FLT_MAX;
                 best_offset[k] = 0;
             }
         }
 
-        float row_min = 3.402823466e+38;
+        float row_min = FLT_MAX;
 
         for (int k = 0; k < STATES_PER_THREAD; ++k) {
             int u_idx = tid + k * int(gl_SubgroupSize);
 
             if (u_idx >= p.tpitch) {
-                s_curr[k] = 3.402823466e+38;
+                s_curr[k] = FLT_MAX;
                 continue;
             }
 
             float total_cost;
             if (use_eedi3) {
                 total_cost = min_val[k] + cost_data[k];
-                total_cost = min(total_cost, 3.4e+38 * 0.9);
+                total_cost = min(total_cost, FLT_MAX * 0.9);
             } else {
                 total_cost = min_val[k];
             }
@@ -143,12 +144,12 @@ void main() {
         for (int k = 0; k < STATES_PER_THREAD; ++k) {
             int u_idx = tid + k * int(gl_SubgroupSize);
             if (u_idx < p.tpitch) {
-                if (s_curr[k] < 3.4e+38 * 0.9) {
+                if (s_curr[k] < FLT_MAX * 0.9) {
                     s_curr[k] -= row_min;
                 }
                 s_prev[k] = s_curr[k];
             } else {
-                s_prev[k] = 3.402823466e+38;
+                s_prev[k] = FLT_MAX;
             }
         }
     }

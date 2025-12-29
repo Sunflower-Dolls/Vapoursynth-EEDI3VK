@@ -703,7 +703,7 @@ void VS_CC eedi3Create(const VSMap* in, VSMap* out,
     int err = 0;
 
     try {
-        vk_d->device_id = vsapi->mapGetIntSaturated(in, "device", 0, &err);
+        vk_d->device_id = vsapi->mapGetIntSaturated(in, "device_id", 0, &err);
         if (err != 0) {
             vk_d->device_id = -1;
         }
@@ -894,9 +894,13 @@ void VS_CC eedi3Create(const VSMap* in, VSMap* out,
         vk_d->vk_stride_pixels =
             static_cast<int>(vk_d->vk_stride / sizeof(float));
 
-        int num_threads = 1;
+        int num_streams = vsapi->mapGetIntSaturated(in, "num_streams", 0, &err);
+        if (err != 0) {
+            num_streams = 1;
+        }
+
         vk_d->resource_pool = std::make_unique<eedi3vk::VulkanResourcePool>(
-            *vk_d->context, *vk_d->memory, num_threads, vk_d->vk_stride,
+            *vk_d->context, *vk_d->memory, num_streams, vk_d->vk_stride,
             d->vi.width, d->vi.height, d->tpitch, d->mclip != nullptr);
 
     } catch (const std::string& error) {
@@ -953,6 +957,7 @@ VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* vspapi) {
                              "vthresh2:float:opt;"
                              "sclip:vnode:opt;"
                              "mclip:vnode:opt;"
-                             "device:int:opt;",
+                             "device_id:int:opt;"
+                             "num_streams:int:opt;",
                              "clip:vnode;", eedi3Create, nullptr, plugin);
 }

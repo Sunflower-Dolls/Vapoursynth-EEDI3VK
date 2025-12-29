@@ -9,7 +9,7 @@ Ported from AviSynth plugin http://bengal.missouri.edu/~kes25c/ and http://ldeso
 
 ## Parameters
 
-    eedi3vk.EEDI3(clip clip, int field[, bint dh=False, int[] planes=[0, 1, 2], float alpha=0.2, float beta=0.25, float gamma=20.0, int nrad=2, int mdis=20, bint hp=False, bint ucubic=True, bint cost3=True, int vcheck=2, float vthresh0=32.0, float vthresh1=64.0, float vthresh2=4.0, clip sclip=None, clip mclip=None])
+    eedi3vk.EEDI3(clip clip, int field[, bint dh=False, int[] planes=[0, 1, 2], float alpha=0.2, float beta=0.25, float gamma=20.0, int nrad=2, int mdis=20, bint hp=False, bint ucubic=True, bint cost3=True, int vcheck=2, float vthresh0=32.0, float vthresh1=64.0, float vthresh2=4.0, clip sclip=None, clip mclip=None, int device_id=-1, int num_streams=1])
 
 * clip: Clip to process. Only formats with float sample type of 32 bit depth is supported.
 
@@ -78,6 +78,10 @@ Ported from AviSynth plugin http://bengal.missouri.edu/~kes25c/ and http://ldeso
 ```
 
 * mclip: A mask to use edge-directed interpolation only on specified pixels. Pixels where the mask is 0 are generated using cubic linear or bicubic interpolation. The main goal of the mask is to save calculations.
+
+* device_id: Selects which Vulkan physical device to run on (default: -1 = auto).
+
+* num_streams: Number of concurrent Vulkan streams (default: 1). Increase this for better parallelism if you have a powerful GPU, or decrease it if you run into insufficient vram.
 
 ## Statistics - Compute Complexity
 
