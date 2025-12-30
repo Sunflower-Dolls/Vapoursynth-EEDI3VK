@@ -45,9 +45,18 @@ volk_dep = dependency('volk',
   fallback: ['volk', 'volk_dep']
 )
 
-vma_dep = dependency('vulkan_memory_allocator',
-  fallback: ['vulkan-memory-allocator', 'vma_dep']
+vma_dep = dependency(
+  'vulkan_memory_allocator',
+  fallback: ['vulkan-memory-allocator', 'vma_dep'],
+  required: false,
 )
+if not vma_dep.found()
+  if cxx.has_header('vk_mem_alloc.h')
+    vma_dep = declare_dependency()
+  else
+    error('vk_mem_alloc.h not found (need vulkan-memory-allocator or the subproject).')
+  endif
+endif
 
 dependencies = [
   vapoursynth_dep,
