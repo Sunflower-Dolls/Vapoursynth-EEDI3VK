@@ -360,14 +360,17 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                 int set_idx = 0;
                 auto dispatch = [&](eedi3vk::VulkanComputePipeline& pipeline,
                                     uint32_t gx, uint32_t gy, uint32_t gz,
-                                    const void* params, size_t params_size) {
+                                    const void* params, size_t params_size,
+                                    bool barrier_after) {
                     pipeline.dispatch(cmd, *res.descriptor_sets[set_idx++], gx,
                                       gy, gz, params,
                                       static_cast<uint32_t>(params_size));
-                    cmd.pipelineBarrier(
-                        vk::PipelineStageFlagBits::eComputeShader,
-                        vk::PipelineStageFlagBits::eComputeShader, {},
-                        compute_to_compute_barrier, nullptr, nullptr);
+                    if (barrier_after) {
+                        cmd.pipelineBarrier(
+                            vk::PipelineStageFlagBits::eComputeShader,
+                            vk::PipelineStageFlagBits::eComputeShader, {},
+                            compute_to_compute_barrier, nullptr, nullptr);
+                    }
                 };
 
                 {
@@ -382,7 +385,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                         (dst_height - (1 - field_n) + 1) / 2;
                     dispatch(vk_d->pipelines->getCopyField(),
                              divUp(dst_width, 16), divUp(copy_field_height, 16),
-                             1, &params, sizeof(params));
+                             1, &params, sizeof(params), false);
                 }
 
                 if (mclip != nullptr) {
@@ -399,7 +402,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
 
                     dispatch(vk_d->pipelines->getDilateMask(),
                              divUp(dst_width, 32), divUp(field_height, 16), 1,
-                             &params, sizeof(params));
+                             &params, sizeof(params), true);
                 }
 
                 {
@@ -422,7 +425,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
 
                     dispatch(vk_d->pipelines->getCalcCosts(),
                              divUp(dst_width, 32), divUp(field_height, 4), 1,
-                             &params, sizeof(params));
+                             &params, sizeof(params), true);
                 }
 
                 {
@@ -435,7 +438,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                     params.has_mclip = (mclip != nullptr) ? 1 : 0;
 
                     dispatch(vk_d->pipelines->getViterbiScan(), 1, field_height,
-                             1, &params, sizeof(params));
+                             1, &params, sizeof(params), true);
                 }
 
                 {
@@ -451,7 +454,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
 
                     dispatch(vk_d->pipelines->getInterpolate(),
                              divUp(dst_width, 16), divUp(field_height, 16), 1,
-                             &params, sizeof(params));
+                             &params, sizeof(params), false);
                 }
             };
 

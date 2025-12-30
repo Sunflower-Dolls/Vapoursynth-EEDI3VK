@@ -71,8 +71,8 @@ VulkanBuffer VulkanMemory::createGPUBuffer(VkDeviceSize size,
     }
 
     VmaAllocationCreateInfo alloc_info = {};
-    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-    alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+    alloc_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+    alloc_info.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
     VkBuffer buffer = nullptr;
     VmaAllocation allocation = nullptr;
