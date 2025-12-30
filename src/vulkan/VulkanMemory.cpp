@@ -1,6 +1,7 @@
 #include "VulkanMemory.hpp"
 #include "VulkanContext.hpp"
 
+#include <array>
 #include <cstring>
 #include <stdexcept>
 
@@ -34,7 +35,7 @@ VulkanMemory::VulkanMemory(VulkanContext& ctx) : context(ctx) {
 
     vk::CommandPoolCreateInfo pool_info{
         vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-        context.getQueueFamilyIndex()};
+        context.getTransferQueueFamilyIndex()};
     transfer_pool = vk::raii::CommandPool(context.getDevice(), pool_info);
 
     vk::CommandBufferAllocateInfo alloc_info{
@@ -59,6 +60,15 @@ VulkanBuffer VulkanMemory::createGPUBuffer(VkDeviceSize size,
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size = size;
     buffer_info.usage = usage;
+    std::array<uint32_t, 2> families = {context.getQueueFamilyIndex(),
+                                        context.getTransferQueueFamilyIndex()};
+    if (families[0] != families[1]) {
+        buffer_info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        buffer_info.queueFamilyIndexCount = 2;
+        buffer_info.pQueueFamilyIndices = families.data();
+    } else {
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
 
     VmaAllocationCreateInfo alloc_info = {};
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
@@ -83,7 +93,15 @@ VulkanBuffer VulkanMemory::createStagingBuffer(VkDeviceSize size,
     buffer_info.size = size;
     buffer_info.usage = for_upload ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT
                                    : VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    std::array<uint32_t, 2> families = {context.getQueueFamilyIndex(),
+                                        context.getTransferQueueFamilyIndex()};
+    if (families[0] != families[1]) {
+        buffer_info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        buffer_info.queueFamilyIndexCount = 2;
+        buffer_info.pQueueFamilyIndices = families.data();
+    } else {
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
 
     VmaAllocationCreateInfo alloc_info = {};
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
@@ -130,7 +148,7 @@ void VulkanMemory::uploadToBuffer(VulkanBuffer& gpu_buffer, const void* data,
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &*transfer_cmd;
 
-    context.submit(submit_info, *transfer_fence);
+    context.submitTransfer(submit_info, *transfer_fence);
 
     auto result =
         context.getDevice().waitForFences(*transfer_fence, VK_TRUE, UINT64_MAX);
@@ -155,7 +173,7 @@ void VulkanMemory::downloadFromBuffer(VulkanBuffer& gpu_buffer, void* data,
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &*transfer_cmd;
 
-    context.submit(submit_info, *transfer_fence);
+    context.submitTransfer(submit_info, *transfer_fence);
 
     auto result =
         context.getDevice().waitForFences(*transfer_fence, VK_TRUE, UINT64_MAX);
@@ -181,7 +199,7 @@ void VulkanMemory::copyBuffer(VulkanBuffer& src, VulkanBuffer& dst,
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &*transfer_cmd;
 
-    context.submit(submit_info, *transfer_fence);
+    context.submitTransfer(submit_info, *transfer_fence);
 
     auto result =
         context.getDevice().waitForFences(*transfer_fence, VK_TRUE, UINT64_MAX);

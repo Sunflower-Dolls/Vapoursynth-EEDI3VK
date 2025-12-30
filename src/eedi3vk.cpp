@@ -277,6 +277,9 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
             field_n = field;
         }
 
+        const bool use_dedicated_transfer =
+            vk_d->context->hasDedicatedTransferQueue();
+
         for (int plane = 0; plane < d->vi.format.numPlanes; plane++) {
             if (!d->process.at(plane)) {
                 const uint8_t* srcp = vsapi->getReadPtr(src, plane);
@@ -302,6 +305,8 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
 
             size_t plane_size_bytes = vk_d->vk_stride * plane_height;
             size_t dst_size_bytes = vk_d->vk_stride * dst_height;
+            const bool need_dmap_readback = (d->vcheck > 0);
+            VkDeviceSize dmap_size_bytes = 0;
 
             if (res.descriptor_sets.empty()) {
                 auto& device = vk_d->context->getDevice();
@@ -339,181 +344,260 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                           res.dmap_buffer.buffer, res.bmask_buffer.buffer}});
             }
 
-            res.command_buffer.reset({});
-            res.command_buffer.begin(
-                {vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-            {
-                auto* staging_ptr =
-                    static_cast<uint8_t*>(res.src_staging.getMappedData());
-                const uint8_t* src_ptr = vsapi->getReadPtr(src, plane);
-                int src_stride = static_cast<int>(vsapi->getStride(src, plane));
-
-                for (int y = 0; y < plane_height; y++) {
-                    std::memcpy(staging_ptr + (y * vk_d->vk_stride),
-                                src_ptr + (y * src_stride),
-                                plane_width * sizeof(float));
-                }
-
-                vmaFlushAllocation(vk_d->memory->getAllocator(),
-                                   res.src_staging.allocation, 0,
-                                   plane_size_bytes);
-
-                vk::BufferCopy copy_region{0, 0, plane_size_bytes};
-                res.command_buffer.copyBuffer(
-                    res.src_staging.buffer, res.src_buffer.buffer, copy_region);
-            }
-
-            if (mclip != nullptr) {
-                auto* staging_ptr =
-                    static_cast<uint8_t*>(res.mclip_staging.getMappedData());
-                const uint8_t* mclip_ptr = vsapi->getReadPtr(mclip, plane);
-                int mclip_stride =
-                    static_cast<int>(vsapi->getStride(mclip, plane));
-
-                for (int y = 0; y < plane_height; y++) {
-                    std::memcpy(staging_ptr + (y * vk_d->vk_stride),
-                                mclip_ptr + (y * mclip_stride),
-                                plane_width * sizeof(float));
-                }
-
-                vmaFlushAllocation(vk_d->memory->getAllocator(),
-                                   res.mclip_staging.allocation, 0,
-                                   plane_size_bytes);
-
-                vk::BufferCopy copy_region{0, 0, plane_size_bytes};
-                res.command_buffer.copyBuffer(res.mclip_staging.buffer,
-                                              res.mclip_buffer.buffer,
-                                              copy_region);
-            }
-
-            vk::MemoryBarrier barrier{vk::AccessFlagBits::eTransferWrite,
-                                      vk::AccessFlagBits::eShaderRead |
-                                          vk::AccessFlagBits::eShaderWrite};
-            res.command_buffer.pipelineBarrier(
-                vk::PipelineStageFlagBits::eTransfer,
-                vk::PipelineStageFlagBits::eComputeShader, {}, barrier, nullptr,
-                nullptr);
-
-            int set_idx = 0;
-
-            auto dispatch = [&](eedi3vk::VulkanComputePipeline& pipeline,
-                                uint32_t gx, uint32_t gy, uint32_t gz,
-                                const void* params, size_t params_size) {
-                pipeline.dispatch(res.command_buffer,
-                                  *res.descriptor_sets[set_idx++], gx, gy, gz,
-                                  params, static_cast<uint32_t>(params_size));
-                res.command_buffer.pipelineBarrier(
-                    vk::PipelineStageFlagBits::eComputeShader,
-                    vk::PipelineStageFlagBits::eComputeShader, {}, barrier,
-                    nullptr, nullptr);
-            };
-
-            {
-                eedi3vk::CopyFieldParams params{};
-                params.width = dst_width;
-                params.height = dst_height;
-                params.field = field_n;
-                params.stride = vk_d->vk_stride_pixels;
-                params.dh = d->dh ? 1 : 0;
-
-                int copy_field_height = (dst_height - (1 - field_n) + 1) / 2;
-                dispatch(vk_d->pipelines->getCopyField(), divUp(dst_width, 16),
-                         divUp(copy_field_height, 16), 1, &params,
-                         sizeof(params));
-            }
-
-            if (mclip != nullptr) {
-                eedi3vk::DilateMaskParams params{};
-                params.width = dst_width;
-                params.height = dst_height;
-                params.mdis = d->mdis;
-                params.field = field_n;
-                params.stride = vk_d->vk_stride_pixels;
-                params.dh = d->dh ? 1 : 0;
-                params.mclip_offset =
-                    (d->vi.format.colorFamily == cfYUV && plane > 0) ? 0.5F
-                                                                     : 0.0F;
-
-                dispatch(vk_d->pipelines->getDilateMask(), divUp(dst_width, 32),
-                         divUp(field_height, 16), 1, &params, sizeof(params));
-            }
-
-            {
-                eedi3vk::CalcCostsParams params{};
-                params.width = dst_width;
-                params.height = dst_height;
-                params.mdis = d->mdis;
-                params.tpitch = d->tpitch;
-                params.alpha = d->alpha;
-                params.beta = d->beta;
-                params.gamma = d->gamma;
-                params.remainingWeight = d->remainingWeight;
-                params.cost3 = d->cost3 ? 1 : 0;
-                params.ucubic = d->ucubic ? 1 : 0;
-                params.has_mclip = (mclip != nullptr) ? 1 : 0;
-                params.nrad = d->nrad;
-                params.field = field_n;
-                params.stride = vk_d->vk_stride_pixels;
-                params.dh = d->dh ? 1 : 0;
-
-                dispatch(vk_d->pipelines->getCalcCosts(), divUp(dst_width, 32),
-                         divUp(field_height, 4), 1, &params, sizeof(params));
-            }
-
-            {
-                eedi3vk::ViterbiScanParams params{};
-                params.width = dst_width;
-                params.height = dst_height;
-                params.mdis = d->mdis;
-                params.tpitch = d->tpitch;
-                params.gamma = d->gamma;
-                params.has_mclip = (mclip != nullptr) ? 1 : 0;
-
-                dispatch(vk_d->pipelines->getViterbiScan(), 1, field_height, 1,
-                         &params, sizeof(params));
-            }
-
-            {
-                eedi3vk::InterpolateParams params{};
-                params.width = dst_width;
-                params.height = dst_height;
-                params.mdis = d->mdis;
-                params.ucubic = d->ucubic ? 1 : 0;
-                params.has_mclip = (mclip != nullptr) ? 1 : 0;
-                params.field = field_n;
-                params.stride = vk_d->vk_stride_pixels;
-                params.dh = d->dh ? 1 : 0;
-
-                dispatch(vk_d->pipelines->getInterpolate(),
-                         divUp(dst_width, 16), divUp(field_height, 16), 1,
-                         &params, sizeof(params));
-            }
-
+            vk::MemoryBarrier transfer_to_compute_barrier{
+                vk::AccessFlagBits::eTransferWrite,
+                vk::AccessFlagBits::eShaderRead |
+                    vk::AccessFlagBits::eShaderWrite};
+            vk::MemoryBarrier compute_to_compute_barrier{
+                vk::AccessFlagBits::eShaderWrite,
+                vk::AccessFlagBits::eShaderRead |
+                    vk::AccessFlagBits::eShaderWrite};
             vk::MemoryBarrier readback_barrier{
                 vk::AccessFlagBits::eShaderWrite,
                 vk::AccessFlagBits::eTransferRead};
-            res.command_buffer.pipelineBarrier(
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eTransfer, {}, readback_barrier,
-                nullptr, nullptr);
 
-            size_t dmap_size =
-                static_cast<size_t>(dst_width) * field_height * sizeof(int32_t);
-            vk::BufferCopy dmap_copy{0, 0, dmap_size};
-            res.command_buffer.copyBuffer(res.dmap_buffer.buffer,
-                                          res.dmap_staging.buffer, dmap_copy);
+            auto record_compute = [&](vk::raii::CommandBuffer& cmd) {
+                int set_idx = 0;
+                auto dispatch = [&](eedi3vk::VulkanComputePipeline& pipeline,
+                                    uint32_t gx, uint32_t gy, uint32_t gz,
+                                    const void* params, size_t params_size) {
+                    pipeline.dispatch(cmd, *res.descriptor_sets[set_idx++], gx,
+                                      gy, gz, params,
+                                      static_cast<uint32_t>(params_size));
+                    cmd.pipelineBarrier(
+                        vk::PipelineStageFlagBits::eComputeShader,
+                        vk::PipelineStageFlagBits::eComputeShader, {},
+                        compute_to_compute_barrier, nullptr, nullptr);
+                };
 
-            vk::BufferCopy dst_copy{0, 0, dst_size_bytes};
-            res.command_buffer.copyBuffer(res.dst_buffer.buffer,
-                                          res.dst_staging.buffer, dst_copy);
+                {
+                    eedi3vk::CopyFieldParams params{};
+                    params.width = dst_width;
+                    params.height = dst_height;
+                    params.field = field_n;
+                    params.stride = vk_d->vk_stride_pixels;
+                    params.dh = d->dh ? 1 : 0;
 
-            res.command_buffer.end();
+                    int copy_field_height =
+                        (dst_height - (1 - field_n) + 1) / 2;
+                    dispatch(vk_d->pipelines->getCopyField(),
+                             divUp(dst_width, 16), divUp(copy_field_height, 16),
+                             1, &params, sizeof(params));
+                }
 
-            vk::SubmitInfo submit_info{};
-            submit_info.commandBufferCount = 1;
-            submit_info.pCommandBuffers = &*res.command_buffer;
-            vk_d->context->submit(submit_info, *res.fence);
+                if (mclip != nullptr) {
+                    eedi3vk::DilateMaskParams params{};
+                    params.width = dst_width;
+                    params.height = dst_height;
+                    params.mdis = d->mdis;
+                    params.field = field_n;
+                    params.stride = vk_d->vk_stride_pixels;
+                    params.dh = d->dh ? 1 : 0;
+                    params.mclip_offset =
+                        (d->vi.format.colorFamily == cfYUV && plane > 0) ? 0.5F
+                                                                         : 0.0F;
+
+                    dispatch(vk_d->pipelines->getDilateMask(),
+                             divUp(dst_width, 32), divUp(field_height, 16), 1,
+                             &params, sizeof(params));
+                }
+
+                {
+                    eedi3vk::CalcCostsParams params{};
+                    params.width = dst_width;
+                    params.height = dst_height;
+                    params.mdis = d->mdis;
+                    params.tpitch = d->tpitch;
+                    params.alpha = d->alpha;
+                    params.beta = d->beta;
+                    params.gamma = d->gamma;
+                    params.remainingWeight = d->remainingWeight;
+                    params.cost3 = d->cost3 ? 1 : 0;
+                    params.ucubic = d->ucubic ? 1 : 0;
+                    params.has_mclip = (mclip != nullptr) ? 1 : 0;
+                    params.nrad = d->nrad;
+                    params.field = field_n;
+                    params.stride = vk_d->vk_stride_pixels;
+                    params.dh = d->dh ? 1 : 0;
+
+                    dispatch(vk_d->pipelines->getCalcCosts(),
+                             divUp(dst_width, 32), divUp(field_height, 4), 1,
+                             &params, sizeof(params));
+                }
+
+                {
+                    eedi3vk::ViterbiScanParams params{};
+                    params.width = dst_width;
+                    params.height = dst_height;
+                    params.mdis = d->mdis;
+                    params.tpitch = d->tpitch;
+                    params.gamma = d->gamma;
+                    params.has_mclip = (mclip != nullptr) ? 1 : 0;
+
+                    dispatch(vk_d->pipelines->getViterbiScan(), 1, field_height,
+                             1, &params, sizeof(params));
+                }
+
+                {
+                    eedi3vk::InterpolateParams params{};
+                    params.width = dst_width;
+                    params.height = dst_height;
+                    params.mdis = d->mdis;
+                    params.ucubic = d->ucubic ? 1 : 0;
+                    params.has_mclip = (mclip != nullptr) ? 1 : 0;
+                    params.field = field_n;
+                    params.stride = vk_d->vk_stride_pixels;
+                    params.dh = d->dh ? 1 : 0;
+
+                    dispatch(vk_d->pipelines->getInterpolate(),
+                             divUp(dst_width, 16), divUp(field_height, 16), 1,
+                             &params, sizeof(params));
+                }
+            };
+
+            auto upload_plane = [&](vk::raii::CommandBuffer& cmd) {
+                {
+                    auto* staging_ptr =
+                        static_cast<uint8_t*>(res.src_staging.getMappedData());
+                    const uint8_t* src_ptr = vsapi->getReadPtr(src, plane);
+                    int src_stride =
+                        static_cast<int>(vsapi->getStride(src, plane));
+
+                    for (int y = 0; y < plane_height; y++) {
+                        std::memcpy(staging_ptr + (y * vk_d->vk_stride),
+                                    src_ptr + (y * src_stride),
+                                    plane_width * sizeof(float));
+                    }
+
+                    vmaFlushAllocation(vk_d->memory->getAllocator(),
+                                       res.src_staging.allocation, 0,
+                                       plane_size_bytes);
+
+                    vk::BufferCopy copy_region{0, 0, plane_size_bytes};
+                    cmd.copyBuffer(res.src_staging.buffer,
+                                   res.src_buffer.buffer, copy_region);
+                }
+
+                if (mclip != nullptr) {
+                    auto* staging_ptr = static_cast<uint8_t*>(
+                        res.mclip_staging.getMappedData());
+                    const uint8_t* mclip_ptr = vsapi->getReadPtr(mclip, plane);
+                    int mclip_stride =
+                        static_cast<int>(vsapi->getStride(mclip, plane));
+
+                    for (int y = 0; y < plane_height; y++) {
+                        std::memcpy(staging_ptr + (y * vk_d->vk_stride),
+                                    mclip_ptr + (y * mclip_stride),
+                                    plane_width * sizeof(float));
+                    }
+
+                    vmaFlushAllocation(vk_d->memory->getAllocator(),
+                                       res.mclip_staging.allocation, 0,
+                                       plane_size_bytes);
+
+                    vk::BufferCopy copy_region{0, 0, plane_size_bytes};
+                    cmd.copyBuffer(res.mclip_staging.buffer,
+                                   res.mclip_buffer.buffer, copy_region);
+                }
+            };
+
+            auto download_plane = [&](vk::raii::CommandBuffer& cmd) {
+                if (need_dmap_readback) {
+                    dmap_size_bytes = static_cast<VkDeviceSize>(
+                        static_cast<size_t>(dst_width) * field_height *
+                        sizeof(int32_t));
+                    vk::BufferCopy dmap_copy{0, 0, dmap_size_bytes};
+                    cmd.copyBuffer(res.dmap_buffer.buffer,
+                                   res.dmap_staging.buffer, dmap_copy);
+                }
+
+                vk::BufferCopy dst_copy{0, 0, dst_size_bytes};
+                cmd.copyBuffer(res.dst_buffer.buffer, res.dst_staging.buffer,
+                               dst_copy);
+            };
+
+            if (use_dedicated_transfer) {
+                res.transfer_upload_command_buffer.reset({});
+                res.transfer_upload_command_buffer.begin(
+                    {vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+                upload_plane(res.transfer_upload_command_buffer);
+                res.transfer_upload_command_buffer.end();
+
+                vk::SubmitInfo upload_submit_info{};
+                upload_submit_info.commandBufferCount = 1;
+                upload_submit_info.pCommandBuffers =
+                    &*res.transfer_upload_command_buffer;
+                upload_submit_info.signalSemaphoreCount = 1;
+                upload_submit_info.pSignalSemaphores = &*res.upload_semaphore;
+                vk_d->context->submitTransfer(upload_submit_info, vk::Fence{});
+
+                res.compute_command_buffer.reset({});
+                res.compute_command_buffer.begin(
+                    {vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+                record_compute(res.compute_command_buffer);
+                res.compute_command_buffer.pipelineBarrier(
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eTransfer, {}, readback_barrier,
+                    nullptr, nullptr);
+                res.compute_command_buffer.end();
+
+                vk::PipelineStageFlags wait_stage =
+                    vk::PipelineStageFlagBits::eComputeShader;
+                vk::SubmitInfo compute_submit_info{};
+                compute_submit_info.waitSemaphoreCount = 1;
+                compute_submit_info.pWaitSemaphores = &*res.upload_semaphore;
+                compute_submit_info.pWaitDstStageMask = &wait_stage;
+                compute_submit_info.commandBufferCount = 1;
+                compute_submit_info.pCommandBuffers =
+                    &*res.compute_command_buffer;
+                compute_submit_info.signalSemaphoreCount = 1;
+                compute_submit_info.pSignalSemaphores = &*res.compute_semaphore;
+                vk_d->context->submitCompute(compute_submit_info, vk::Fence{});
+
+                res.transfer_download_command_buffer.reset({});
+                res.transfer_download_command_buffer.begin(
+                    {vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+                download_plane(res.transfer_download_command_buffer);
+                res.transfer_download_command_buffer.end();
+
+                vk::PipelineStageFlags transfer_wait_stage =
+                    vk::PipelineStageFlagBits::eTransfer;
+                vk::SubmitInfo download_submit_info{};
+                download_submit_info.waitSemaphoreCount = 1;
+                download_submit_info.pWaitSemaphores = &*res.compute_semaphore;
+                download_submit_info.pWaitDstStageMask = &transfer_wait_stage;
+                download_submit_info.commandBufferCount = 1;
+                download_submit_info.pCommandBuffers =
+                    &*res.transfer_download_command_buffer;
+                vk_d->context->submitTransfer(download_submit_info, *res.fence);
+            } else {
+                res.compute_command_buffer.reset({});
+                res.compute_command_buffer.begin(
+                    {vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+                upload_plane(res.compute_command_buffer);
+
+                res.compute_command_buffer.pipelineBarrier(
+                    vk::PipelineStageFlagBits::eTransfer,
+                    vk::PipelineStageFlagBits::eComputeShader, {},
+                    transfer_to_compute_barrier, nullptr, nullptr);
+
+                record_compute(res.compute_command_buffer);
+
+                res.compute_command_buffer.pipelineBarrier(
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eTransfer, {}, readback_barrier,
+                    nullptr, nullptr);
+
+                download_plane(res.compute_command_buffer);
+
+                res.compute_command_buffer.end();
+
+                vk::SubmitInfo submit_info{};
+                submit_info.commandBufferCount = 1;
+                submit_info.pCommandBuffers = &*res.compute_command_buffer;
+                vk_d->context->submitCompute(submit_info, *res.fence);
+            }
 
             auto result = vk_d->context->getDevice().waitForFences(
                 *res.fence, VK_TRUE, UINT64_MAX);
@@ -525,8 +609,11 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
             vmaInvalidateAllocation(vk_d->memory->getAllocator(),
                                     res.dst_staging.allocation, 0,
                                     dst_size_bytes);
-            vmaInvalidateAllocation(vk_d->memory->getAllocator(),
-                                    res.dmap_staging.allocation, 0, dmap_size);
+            if (need_dmap_readback) {
+                vmaInvalidateAllocation(vk_d->memory->getAllocator(),
+                                        res.dmap_staging.allocation, 0,
+                                        dmap_size_bytes);
+            }
 
             const auto* staging_ptr =
                 static_cast<const uint8_t*>(res.dst_staging.getMappedData());

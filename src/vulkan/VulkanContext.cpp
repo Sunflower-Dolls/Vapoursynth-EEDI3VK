@@ -1,5 +1,6 @@
 #include "VulkanContext.hpp"
 
+#include <array>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -125,22 +126,64 @@ void VulkanContext::pickPhysicalDevice() {
     physical_device = std::move(devices[selected_index]);
 
     auto queue_families = physical_device.getQueueFamilyProperties();
+
+    compute_queue_family_index = static_cast<uint32_t>(-1);
     for (uint32_t i = 0; i < queue_families.size(); i++) {
         if (queue_families[i].queueFlags & vk::QueueFlagBits::eCompute) {
-            queue_family_index = i;
+            compute_queue_family_index = i;
             break;
         }
     }
 
-    if (queue_family_index == static_cast<uint32_t>(-1)) {
+    if (compute_queue_family_index == static_cast<uint32_t>(-1)) {
         throw std::runtime_error("No compute queue family found");
+    }
+
+    transfer_queue_family_index = compute_queue_family_index;
+
+    int separate_transfer_idx = -1;
+    bool found_dedicated = false;
+
+    for (uint32_t i = 0; i < queue_families.size(); i++) {
+        const auto& flags = queue_families[i].queueFlags;
+
+        if (!(flags & vk::QueueFlagBits::eTransfer)) {
+            continue;
+        }
+
+        if (!(flags & vk::QueueFlagBits::eGraphics) &&
+            !(flags & vk::QueueFlagBits::eCompute)) {
+            transfer_queue_family_index = i;
+            found_dedicated = true;
+            break;
+        }
+
+        if (i != compute_queue_family_index) {
+            separate_transfer_idx = static_cast<int>(i);
+        }
+    }
+
+    if (!found_dedicated && separate_transfer_idx >= 0) {
+        transfer_queue_family_index =
+            static_cast<uint32_t>(separate_transfer_idx);
     }
 }
 
 void VulkanContext::createDevice() {
-    float queue_priority = 1.0F;
-    vk::DeviceQueueCreateInfo queue_create_info{
-        {}, queue_family_index, 1, &queue_priority};
+    std::array<float, 1> compute_queue_priority = {1.0F};
+    std::array<float, 1> transfer_queue_priority = {1.0F};
+
+    std::vector<vk::DeviceQueueCreateInfo> queue_create_infos;
+    queue_create_infos.emplace_back(vk::DeviceQueueCreateInfo{
+        {}, compute_queue_family_index, 1, compute_queue_priority.data()});
+
+    if (transfer_queue_family_index != compute_queue_family_index) {
+        queue_create_infos.emplace_back(
+            vk::DeviceQueueCreateInfo{{},
+                                      transfer_queue_family_index,
+                                      1,
+                                      transfer_queue_priority.data()});
+    }
 
     std::vector<const char*> device_extensions = {};
 
@@ -177,8 +220,8 @@ void VulkanContext::createDevice() {
 
     vk::DeviceCreateInfo device_create_info{
         {},
-        1,
-        &queue_create_info,
+        static_cast<uint32_t>(queue_create_infos.size()),
+        queue_create_infos.data(),
         0,
         nullptr,
         static_cast<uint32_t>(device_extensions.size()),
@@ -196,13 +239,26 @@ void VulkanContext::createDevice() {
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
     volkLoadDevice(*device);
 
-    compute_queue = vk::raii::Queue(device, queue_family_index, 0);
+    compute_queue = vk::raii::Queue(device, compute_queue_family_index, 0);
+    transfer_queue = vk::raii::Queue(device, transfer_queue_family_index, 0);
 }
 
-void VulkanContext::submit(const vk::SubmitInfo& submit_info,
-                           const vk::Fence& fence) {
-    std::lock_guard<std::mutex> lock(queue_mutex);
+void VulkanContext::submitCompute(const vk::SubmitInfo& submit_info,
+                                  vk::Fence fence) {
+    std::lock_guard<std::mutex> lock(compute_queue_mutex);
     compute_queue.submit(submit_info, fence);
+}
+
+void VulkanContext::submitTransfer(const vk::SubmitInfo& submit_info,
+                                   vk::Fence fence) {
+    if (transfer_queue_family_index == compute_queue_family_index) {
+        std::lock_guard<std::mutex> lock(compute_queue_mutex);
+        transfer_queue.submit(submit_info, fence);
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(transfer_queue_mutex);
+    transfer_queue.submit(submit_info, fence);
 }
 
 void VulkanContext::waitIdle() { device.waitIdle(); }

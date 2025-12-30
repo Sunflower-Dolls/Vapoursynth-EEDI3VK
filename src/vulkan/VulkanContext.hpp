@@ -31,12 +31,20 @@ class VulkanContext {
     vk::raii::PhysicalDevice& getPhysicalDevice() { return physical_device; }
     vk::raii::Device& getDevice() { return device; }
     vk::raii::Queue& getComputeQueue() { return compute_queue; }
+    vk::raii::Queue& getTransferQueue() { return transfer_queue; }
     [[nodiscard]] uint32_t getQueueFamilyIndex() const {
-        return queue_family_index;
+        return compute_queue_family_index;
+    }
+    [[nodiscard]] uint32_t getTransferQueueFamilyIndex() const {
+        return transfer_queue_family_index;
+    }
+    [[nodiscard]] bool hasDedicatedTransferQueue() const {
+        return transfer_queue_family_index != compute_queue_family_index;
     }
     [[nodiscard]] uint32_t getSubgroupSize() const { return subgroup_size; }
 
-    void submit(const vk::SubmitInfo& submit_info, const vk::Fence& fence);
+    void submitCompute(const vk::SubmitInfo& submit_info, vk::Fence fence);
+    void submitTransfer(const vk::SubmitInfo& submit_info, vk::Fence fence);
     void waitIdle();
 
   private:
@@ -50,10 +58,13 @@ class VulkanContext {
     vk::raii::PhysicalDevice physical_device = nullptr;
     vk::raii::Device device = nullptr;
     vk::raii::Queue compute_queue = nullptr;
+    vk::raii::Queue transfer_queue = nullptr;
 
-    uint32_t queue_family_index = static_cast<uint32_t>(-1);
+    uint32_t compute_queue_family_index = static_cast<uint32_t>(-1);
+    uint32_t transfer_queue_family_index = static_cast<uint32_t>(-1);
     uint32_t subgroup_size = 32;
-    std::mutex queue_mutex;
+    std::mutex compute_queue_mutex;
+    std::mutex transfer_queue_mutex;
 };
 
 } // namespace eedi3vk

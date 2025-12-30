@@ -46,9 +46,14 @@ class TicketSemaphore {
 };
 
 struct FrameResources {
-    vk::raii::CommandPool command_pool;
-    vk::raii::CommandBuffer command_buffer = nullptr;
+    vk::raii::CommandPool compute_command_pool;
+    vk::raii::CommandBuffer compute_command_buffer = nullptr;
+    vk::raii::CommandPool transfer_command_pool;
+    vk::raii::CommandBuffer transfer_upload_command_buffer = nullptr;
+    vk::raii::CommandBuffer transfer_download_command_buffer = nullptr;
     vk::raii::Fence fence;
+    vk::raii::Semaphore upload_semaphore;
+    vk::raii::Semaphore compute_semaphore;
 
     VulkanBuffer params_buffer;
     VulkanBuffer pbackt_buffer;
@@ -68,23 +73,30 @@ struct FrameResources {
     std::unique_ptr<DescriptorPool> descriptor_pool;
     std::vector<vk::raii::DescriptorSet> descriptor_sets;
 
-    FrameResources(vk::raii::CommandPool&& cp, vk::raii::CommandBuffer&& cb,
-                   vk::raii::Fence&& f, VulkanBuffer&& params,
-                   VulkanBuffer&& pbackt, VulkanBuffer&& dmap,
-                   VulkanBuffer&& bmask, VulkanBuffer&& cost,
-                   VulkanBuffer&& dmap_stg, VulkanBuffer&& src,
-                   VulkanBuffer&& dst, VulkanBuffer&& src_stg,
-                   VulkanBuffer&& dst_stg, VulkanBuffer&& mclip,
-                   VulkanBuffer&& mclip_stg,
-                   std::unique_ptr<DescriptorPool>&& dp)
-        : command_pool(std::move(cp)), command_buffer(std::move(cb)),
-          fence(std::move(f)), params_buffer(std::move(params)),
-          pbackt_buffer(std::move(pbackt)), dmap_buffer(std::move(dmap)),
-          bmask_buffer(std::move(bmask)), cost_buffer(std::move(cost)),
-          dmap_staging(std::move(dmap_stg)), src_buffer(std::move(src)),
-          dst_buffer(std::move(dst)), src_staging(std::move(src_stg)),
-          dst_staging(std::move(dst_stg)), mclip_buffer(std::move(mclip)),
-          mclip_staging(std::move(mclip_stg)), descriptor_pool(std::move(dp)) {}
+    FrameResources(
+        vk::raii::CommandPool&& ccp, vk::raii::CommandBuffer&& ccb,
+        vk::raii::CommandPool&& tcp, vk::raii::CommandBuffer&& tcb_upload,
+        vk::raii::CommandBuffer&& tcb_download, vk::raii::Fence&& f,
+        vk::raii::Semaphore&& upload_sem, vk::raii::Semaphore&& compute_sem,
+        VulkanBuffer&& params, VulkanBuffer&& pbackt, VulkanBuffer&& dmap,
+        VulkanBuffer&& bmask, VulkanBuffer&& cost, VulkanBuffer&& dmap_stg,
+        VulkanBuffer&& src, VulkanBuffer&& dst, VulkanBuffer&& src_stg,
+        VulkanBuffer&& dst_stg, VulkanBuffer&& mclip, VulkanBuffer&& mclip_stg,
+        std::unique_ptr<DescriptorPool>&& dp)
+        : compute_command_pool(std::move(ccp)),
+          compute_command_buffer(std::move(ccb)),
+          transfer_command_pool(std::move(tcp)),
+          transfer_upload_command_buffer(std::move(tcb_upload)),
+          transfer_download_command_buffer(std::move(tcb_download)),
+          fence(std::move(f)), upload_semaphore(std::move(upload_sem)),
+          compute_semaphore(std::move(compute_sem)),
+          params_buffer(std::move(params)), pbackt_buffer(std::move(pbackt)),
+          dmap_buffer(std::move(dmap)), bmask_buffer(std::move(bmask)),
+          cost_buffer(std::move(cost)), dmap_staging(std::move(dmap_stg)),
+          src_buffer(std::move(src)), dst_buffer(std::move(dst)),
+          src_staging(std::move(src_stg)), dst_staging(std::move(dst_stg)),
+          mclip_buffer(std::move(mclip)), mclip_staging(std::move(mclip_stg)),
+          descriptor_pool(std::move(dp)) {}
 
     ~FrameResources() = default;
 
