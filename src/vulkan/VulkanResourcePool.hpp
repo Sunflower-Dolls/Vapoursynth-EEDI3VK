@@ -7,9 +7,12 @@
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 // NOLINTEND(cppcoreguidelines-macro-usage,cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
 
+#include <array>
 #include <atomic>
 #include <deque>
 #include <mutex>
+#include <optional>
+#include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
 #include "VulkanComputePipeline.hpp"
@@ -40,6 +43,21 @@ class TicketSemaphore {
         current.notify_all();
     }
 
+    bool tryAcquire() noexcept {
+        intptr_t tk = ticket.load(std::memory_order_acquire);
+        while (true) {
+            intptr_t curr = current.load(std::memory_order_acquire);
+            if (tk > curr) {
+                return false;
+            }
+            if (ticket.compare_exchange_weak(tk, tk + 1,
+                                             std::memory_order_acquire,
+                                             std::memory_order_relaxed)) {
+                return true;
+            }
+        }
+    }
+
   private:
     std::atomic<intptr_t> ticket;
     std::atomic<intptr_t> current;
@@ -47,10 +65,7 @@ class TicketSemaphore {
 
 struct FrameResources {
     vk::raii::CommandPool compute_command_pool;
-    vk::raii::CommandBuffer compute_command_buffer = nullptr;
     vk::raii::CommandPool transfer_command_pool;
-    vk::raii::CommandBuffer transfer_upload_command_buffer = nullptr;
-    vk::raii::CommandBuffer transfer_download_command_buffer = nullptr;
     vk::raii::Fence fence;
     vk::raii::Semaphore upload_semaphore;
     vk::raii::Semaphore compute_semaphore;
@@ -73,22 +88,32 @@ struct FrameResources {
     std::unique_ptr<DescriptorPool> descriptor_pool;
     std::vector<vk::raii::DescriptorSet> descriptor_sets;
 
-    FrameResources(
-        vk::raii::CommandPool&& ccp, vk::raii::CommandBuffer&& ccb,
-        vk::raii::CommandPool&& tcp, vk::raii::CommandBuffer&& tcb_upload,
-        vk::raii::CommandBuffer&& tcb_download, vk::raii::Fence&& f,
-        vk::raii::Semaphore&& upload_sem, vk::raii::Semaphore&& compute_sem,
-        VulkanBuffer&& params, VulkanBuffer&& pbackt, VulkanBuffer&& dmap,
-        VulkanBuffer&& bmask, VulkanBuffer&& cost, VulkanBuffer&& dmap_stg,
-        VulkanBuffer&& src, VulkanBuffer&& dst, VulkanBuffer&& src_stg,
-        VulkanBuffer&& dst_stg, VulkanBuffer&& mclip, VulkanBuffer&& mclip_stg,
-        std::unique_ptr<DescriptorPool>&& dp)
+    struct PlaneCommandBuffers {
+        vk::raii::CommandBuffer upload = nullptr;
+        vk::raii::CommandBuffer download = nullptr;
+        std::array<vk::raii::CommandBuffer, 2> combined = {nullptr, nullptr};
+        std::array<vk::raii::CommandBuffer, 2> compute = {nullptr, nullptr};
+        std::array<bool, 2> combined_recorded = {false, false};
+        std::array<bool, 2> compute_recorded = {false, false};
+        bool upload_recorded = false;
+        bool download_recorded = false;
+    };
+
+    std::vector<PlaneCommandBuffers> plane_command_buffers;
+
+    FrameResources(vk::raii::CommandPool&& ccp, vk::raii::CommandPool&& tcp,
+                   vk::raii::Fence&& f, vk::raii::Semaphore&& upload_sem,
+                   vk::raii::Semaphore&& compute_sem, VulkanBuffer&& params,
+                   VulkanBuffer&& pbackt, VulkanBuffer&& dmap,
+                   VulkanBuffer&& bmask, VulkanBuffer&& cost,
+                   VulkanBuffer&& dmap_stg, VulkanBuffer&& src,
+                   VulkanBuffer&& dst, VulkanBuffer&& src_stg,
+                   VulkanBuffer&& dst_stg, VulkanBuffer&& mclip,
+                   VulkanBuffer&& mclip_stg,
+                   std::unique_ptr<DescriptorPool>&& dp)
         : compute_command_pool(std::move(ccp)),
-          compute_command_buffer(std::move(ccb)),
-          transfer_command_pool(std::move(tcp)),
-          transfer_upload_command_buffer(std::move(tcb_upload)),
-          transfer_download_command_buffer(std::move(tcb_download)),
-          fence(std::move(f)), upload_semaphore(std::move(upload_sem)),
+          transfer_command_pool(std::move(tcp)), fence(std::move(f)),
+          upload_semaphore(std::move(upload_sem)),
           compute_semaphore(std::move(compute_sem)),
           params_buffer(std::move(params)), pbackt_buffer(std::move(pbackt)),
           dmap_buffer(std::move(dmap)), bmask_buffer(std::move(bmask)),
@@ -137,6 +162,7 @@ class VulkanResourcePool {
     VulkanResourcePool& operator=(VulkanResourcePool&&) = delete;
 
     FrameResources acquire();
+    std::optional<FrameResources> tryAcquire();
     void release(FrameResources&& res);
 
     [[nodiscard]] VulkanContext& getContext() { return context; }

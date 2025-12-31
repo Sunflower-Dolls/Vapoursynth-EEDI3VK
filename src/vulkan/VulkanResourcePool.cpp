@@ -26,27 +26,11 @@ VulkanResourcePool::VulkanResourcePool(VulkanContext& ctx, VulkanMemory& mem,
         vk::raii::CommandPool compute_command_pool(context.getDevice(),
                                                    compute_pool_info);
 
-        vk::CommandBufferAllocateInfo alloc_info{
-            *compute_command_pool, vk::CommandBufferLevel::ePrimary, 1};
-        auto cmd_buffers =
-            vk::raii::CommandBuffers(context.getDevice(), alloc_info);
-        vk::raii::CommandBuffer compute_command_buffer =
-            std::move(cmd_buffers[0]);
-
         vk::CommandPoolCreateInfo transfer_pool_info{
             vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
             context.getTransferQueueFamilyIndex()};
         vk::raii::CommandPool transfer_command_pool(context.getDevice(),
                                                     transfer_pool_info);
-
-        vk::CommandBufferAllocateInfo transfer_alloc_info{
-            *transfer_command_pool, vk::CommandBufferLevel::ePrimary, 2};
-        auto transfer_cmd_buffers =
-            vk::raii::CommandBuffers(context.getDevice(), transfer_alloc_info);
-        vk::raii::CommandBuffer transfer_upload_command_buffer =
-            std::move(transfer_cmd_buffers[0]);
-        vk::raii::CommandBuffer transfer_download_command_buffer =
-            std::move(transfer_cmd_buffers[1]);
 
         vk::FenceCreateInfo fence_info{};
         vk::raii::Fence fence(context.getDevice(), fence_info);
@@ -100,18 +84,15 @@ VulkanResourcePool::VulkanResourcePool(VulkanContext& ctx, VulkanMemory& mem,
             std::make_unique<DescriptorPool>(context, 8, pool_sizes);
 
         resources.emplace_back(
-            std::move(compute_command_pool), std::move(compute_command_buffer),
-            std::move(transfer_command_pool),
-            std::move(transfer_upload_command_buffer),
-            std::move(transfer_download_command_buffer), std::move(fence),
-            std::move(upload_semaphore), std::move(compute_semaphore),
-            std::move(params_buffer), std::move(pbackt_buffer),
-            std::move(dmap_buffer), std::move(bmask_buffer),
-            std::move(cost_buffer), std::move(dmap_staging),
-            std::move(src_buffer), std::move(dst_buffer),
-            std::move(src_staging), std::move(dst_staging),
-            std::move(mclip_buffer), std::move(mclip_staging),
-            std::move(descriptor_pool));
+            std::move(compute_command_pool), std::move(transfer_command_pool),
+            std::move(fence), std::move(upload_semaphore),
+            std::move(compute_semaphore), std::move(params_buffer),
+            std::move(pbackt_buffer), std::move(dmap_buffer),
+            std::move(bmask_buffer), std::move(cost_buffer),
+            std::move(dmap_staging), std::move(src_buffer),
+            std::move(dst_buffer), std::move(src_staging),
+            std::move(dst_staging), std::move(mclip_buffer),
+            std::move(mclip_staging), std::move(descriptor_pool));
     }
 }
 
@@ -139,6 +120,16 @@ VulkanResourcePool::~VulkanResourcePool() {
 
 FrameResources VulkanResourcePool::acquire() {
     semaphore.acquire();
+    std::lock_guard<std::mutex> lock(resources_lock);
+    FrameResources res = std::move(resources.front());
+    resources.pop_front();
+    return res;
+}
+
+std::optional<FrameResources> VulkanResourcePool::tryAcquire() {
+    if (!semaphore.tryAcquire()) {
+        return std::nullopt;
+    }
     std::lock_guard<std::mutex> lock(resources_lock);
     FrameResources res = std::move(resources.front());
     resources.pop_front();
