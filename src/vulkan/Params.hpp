@@ -14,7 +14,7 @@ struct CalcCostsParams {
     float alpha;
     float beta;
     float gamma;
-    float remainingWeight;
+    float remaining_weight;
     int32_t cost3;
     int32_t ucubic;
     int32_t has_mclip;

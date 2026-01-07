@@ -28,12 +28,12 @@ constexpr int MARGIN_V = 4;
 struct EEDI3Data {
     VSNode *node, *sclip, *mclip;
     VSVideoInfo vi;
-    VSVideoFormat padFormat;
+    VSVideoFormat pad_format;
     int field, nrad, mdis, vcheck;
     std::array<bool, 3> process;
     bool dh, ucubic, cost3;
     float alpha, beta, gamma, vthresh2;
-    float remainingWeight, rcpVthresh0, rcpVthresh1, rcpVthresh2;
+    float remaining_weight, rcp_vthresh0, rcp_vthresh1, rcp_vthresh2;
     int tpitch;
 };
 
@@ -51,15 +51,16 @@ struct EEDI3VKData {
     int vk_stride_pixels;
 };
 
-inline void copyPad(const VSFrame* src, VSFrame* dst, const int plane,
-                    const bool dh, const int off, const VSAPI* vsapi) noexcept {
-    const int srcWidth = vsapi->getFrameWidth(src, plane);
-    const int dstWidth = vsapi->getFrameWidth(dst, 0);
-    const int srcHeight = vsapi->getFrameHeight(src, plane);
-    const int dstHeight = vsapi->getFrameHeight(dst, 0);
-    const ptrdiff_t srcStride =
+inline void copy_pad(const VSFrame* src, VSFrame* dst, const int plane,
+                     const bool dh, const int off,
+                     const VSAPI* vsapi) noexcept {
+    const int src_width = vsapi->getFrameWidth(src, plane);
+    const int dst_width = vsapi->getFrameWidth(dst, 0);
+    const int src_height = vsapi->getFrameHeight(src, plane);
+    const int dst_height = vsapi->getFrameHeight(dst, 0);
+    const ptrdiff_t src_stride =
         vsapi->getStride(src, plane) / static_cast<ptrdiff_t>(sizeof(float));
-    const ptrdiff_t dstStride =
+    const ptrdiff_t dst_stride =
         vsapi->getStride(dst, 0) / static_cast<ptrdiff_t>(sizeof(float));
     const auto* srcp =
         reinterpret_cast<const float*>(vsapi->getReadPtr(src, plane));
@@ -67,42 +68,43 @@ inline void copyPad(const VSFrame* src, VSFrame* dst, const int plane,
         reinterpret_cast<float*>(vsapi->getWritePtr(dst, 0));
 
     if (!dh) {
-        vsh::bitblt(dstp + (dstStride * (MARGIN_V + off)) + MARGIN_H,
-                    vsapi->getStride(dst, 0) * 2, srcp + (srcStride * off),
-                    vsapi->getStride(src, plane) * 2, srcWidth * sizeof(float),
-                    srcHeight / 2);
+        vsh::bitblt(dstp + (dst_stride * (MARGIN_V + off)) + MARGIN_H,
+                    vsapi->getStride(dst, 0) * 2, srcp + (src_stride * off),
+                    vsapi->getStride(src, plane) * 2, src_width * sizeof(float),
+                    src_height / 2);
     } else {
-        vsh::bitblt(dstp + (dstStride * (MARGIN_V + off)) + MARGIN_H,
+        vsh::bitblt(dstp + (dst_stride * (MARGIN_V + off)) + MARGIN_H,
                     vsapi->getStride(dst, 0) * 2, srcp,
-                    vsapi->getStride(src, plane), srcWidth * sizeof(float),
-                    srcHeight);
+                    vsapi->getStride(src, plane), src_width * sizeof(float),
+                    src_height);
     }
 
-    dstp += dstStride * (MARGIN_V + off);
+    dstp += dst_stride * (MARGIN_V + off);
 
-    for (int y = MARGIN_V + off; y < dstHeight - MARGIN_V; y += 2) {
+    for (int y = MARGIN_V + off; y < dst_height - MARGIN_V; y += 2) {
         for (int x = 0; x < MARGIN_H; x++) {
             dstp[x] = dstp[(MARGIN_H * 2) - x];
         }
 
-        for (int x = dstWidth - MARGIN_H, c = 2; x < dstWidth; x++, c += 2) {
+        for (int x = dst_width - MARGIN_H, c = 2; x < dst_width; x++, c += 2) {
             dstp[x] = dstp[x - c];
         }
 
-        dstp += dstStride * 2;
+        dstp += dst_stride * 2;
     }
 
     dstp = reinterpret_cast<float*>(vsapi->getWritePtr(dst, 0));
 
     for (int y = off; y < MARGIN_V; y += 2) {
-        memcpy(dstp + (dstStride * y), dstp + (dstStride * (MARGIN_V * 2 - y)),
-               dstWidth * sizeof(float));
+        memcpy(dstp + (dst_stride * y),
+               dstp + (dst_stride * (MARGIN_V * 2 - y)),
+               dst_width * sizeof(float));
     }
 
-    for (int y = dstHeight - MARGIN_V + off, c = 2 + (2 * off); y < dstHeight;
+    for (int y = dst_height - MARGIN_V + off, c = 2 + (2 * off); y < dst_height;
          y += 2, c += 4) {
-        memcpy(dstp + (dstStride * y), dstp + (dstStride * (y - c)),
-               dstWidth * sizeof(float));
+        memcpy(dstp + (dst_stride * y), dstp + (dst_stride * (y - c)),
+               dst_width * sizeof(float));
     }
 }
 
@@ -177,11 +179,11 @@ inline void vCheck(const float* srcp, const float* scpp,
                     mdiff1 = std::max(d2, d3);
                 }
 
-                const float a0 = mdiff0 * d->rcpVthresh0;
-                const float a1 = mdiff1 * d->rcpVthresh1;
+                const float a0 = mdiff0 * d->rcp_vthresh0;
+                const float a1 = mdiff1 * d->rcp_vthresh1;
                 const float a2 = std::max(
                     (d->vthresh2 - static_cast<float>(std::abs(dirc))) *
-                        d->rcpVthresh2,
+                        d->rcp_vthresh2,
                     0.0F);
                 const float a = std::min(std::max({a0, a1, a2}), 1.0F);
 
@@ -200,10 +202,10 @@ inline void vCheck(const float* srcp, const float* scpp,
     }
 }
 
-inline uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
+inline uint32_t div_up(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
-void updateDescriptorSet(vk::Device device, vk::DescriptorSet set,
-                         std::span<const vk::Buffer> buffers) {
+void update_descriptor_set(vk::Device device, vk::DescriptorSet set,
+                           std::span<const vk::Buffer> buffers) {
     std::vector<vk::DescriptorBufferInfo> buffer_infos;
     buffer_infos.reserve(buffers.size());
     for (auto buffer : buffers) {
@@ -219,18 +221,19 @@ void updateDescriptorSet(vk::Device device, vk::DescriptorSet set,
     device.updateDescriptorSets(writes, nullptr);
 }
 
-vk::raii::CommandBuffer allocatePrimaryCommandBuffer(vk::raii::Device& device,
-                                                     vk::CommandPool pool) {
+vk::raii::CommandBuffer
+allocate_primary_command_buffer(vk::raii::Device& device,
+                                vk::CommandPool pool) {
     vk::CommandBufferAllocateInfo alloc_info{
         pool, vk::CommandBufferLevel::ePrimary, 1};
     auto cmd_buffers = vk::raii::CommandBuffers(device, alloc_info);
     return std::move(cmd_buffers[0]);
 }
 
-void recordComputeSequence(vk::raii::CommandBuffer& cmd, EEDI3VKData* vk_d,
-                           eedi3vk::FrameResources& res, int dst_width,
-                           int dst_height, int field_height, int field_n,
-                           int plane, bool has_mclip) {
+void record_compute_sequence(vk::raii::CommandBuffer& cmd, EEDI3VKData* vk_d,
+                             eedi3vk::FrameResources& res, int dst_width,
+                             int dst_height, int field_height, int field_n,
+                             int plane, bool has_mclip) {
     vk::MemoryBarrier compute_to_compute_barrier{
         vk::AccessFlagBits::eShaderWrite,
         vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite};
@@ -257,8 +260,8 @@ void recordComputeSequence(vk::raii::CommandBuffer& cmd, EEDI3VKData* vk_d,
         params.dh = vk_d->d.dh ? 1 : 0;
 
         int copy_field_height = (dst_height - (1 - field_n) + 1) / 2;
-        dispatch(vk_d->pipelines->getCopyField(), divUp(dst_width, 16),
-                 divUp(copy_field_height, 16), 1, &params, sizeof(params),
+        dispatch(vk_d->pipelines->getCopyField(), div_up(dst_width, 16),
+                 div_up(copy_field_height, 16), 1, &params, sizeof(params),
                  false);
     }
 
@@ -273,8 +276,8 @@ void recordComputeSequence(vk::raii::CommandBuffer& cmd, EEDI3VKData* vk_d,
         params.mclip_offset =
             (vk_d->d.vi.format.colorFamily == cfYUV && plane > 0) ? 0.5F : 0.0F;
 
-        dispatch(vk_d->pipelines->getDilateMask(), divUp(dst_width, 32),
-                 divUp(field_height, 16), 1, &params, sizeof(params), true);
+        dispatch(vk_d->pipelines->getDilateMask(), div_up(dst_width, 32),
+                 div_up(field_height, 16), 1, &params, sizeof(params), true);
     }
 
     {
@@ -286,7 +289,7 @@ void recordComputeSequence(vk::raii::CommandBuffer& cmd, EEDI3VKData* vk_d,
         params.alpha = vk_d->d.alpha;
         params.beta = vk_d->d.beta;
         params.gamma = vk_d->d.gamma;
-        params.remainingWeight = vk_d->d.remainingWeight;
+        params.remaining_weight = vk_d->d.remaining_weight;
         params.cost3 = vk_d->d.cost3 ? 1 : 0;
         params.ucubic = vk_d->d.ucubic ? 1 : 0;
         params.has_mclip = has_mclip ? 1 : 0;
@@ -295,8 +298,8 @@ void recordComputeSequence(vk::raii::CommandBuffer& cmd, EEDI3VKData* vk_d,
         params.stride = vk_d->vk_stride_pixels;
         params.dh = vk_d->d.dh ? 1 : 0;
 
-        dispatch(vk_d->pipelines->getCalcCosts(), divUp(dst_width, 32),
-                 divUp(field_height, 4), 1, &params, sizeof(params), true);
+        dispatch(vk_d->pipelines->getCalcCosts(), div_up(dst_width, 32),
+                 div_up(field_height, 4), 1, &params, sizeof(params), true);
     }
 
     {
@@ -324,12 +327,12 @@ void recordComputeSequence(vk::raii::CommandBuffer& cmd, EEDI3VKData* vk_d,
         params.stride = vk_d->vk_stride_pixels;
         params.dh = vk_d->d.dh ? 1 : 0;
 
-        dispatch(vk_d->pipelines->getInterpolate(), divUp(dst_width, 16),
-                 divUp(field_height, 16), 1, &params, sizeof(params), false);
+        dispatch(vk_d->pipelines->getInterpolate(), div_up(dst_width, 16),
+                 div_up(field_height, 16), 1, &params, sizeof(params), false);
     }
 }
 
-void ensureRecordedPlaneCommandBuffers(
+void ensure_recorded_plane_command_buffers(
     EEDI3VKData* vk_d, eedi3vk::FrameResources& res, int plane, int field_n,
     int plane_height, int dst_width, int dst_height, int field_height,
     bool has_mclip, bool need_dmap_readback, bool use_dedicated_transfer) {
@@ -358,7 +361,7 @@ void ensureRecordedPlaneCommandBuffers(
 
     if (use_dedicated_transfer) {
         if (plane_cmds.upload == nullptr) {
-            plane_cmds.upload = allocatePrimaryCommandBuffer(
+            plane_cmds.upload = allocate_primary_command_buffer(
                 device, *res.transfer_command_pool);
         }
         if (!plane_cmds.upload_recorded) {
@@ -376,14 +379,15 @@ void ensureRecordedPlaneCommandBuffers(
         }
 
         if (plane_cmds.compute.at(field_n) == nullptr) {
-            plane_cmds.compute.at(field_n) =
-                allocatePrimaryCommandBuffer(device, *res.compute_command_pool);
+            plane_cmds.compute.at(field_n) = allocate_primary_command_buffer(
+                device, *res.compute_command_pool);
         }
         if (!plane_cmds.compute_recorded.at(field_n)) {
             auto& compute_cmd = plane_cmds.compute.at(field_n);
             compute_cmd.begin(begin_info);
-            recordComputeSequence(compute_cmd, vk_d, res, dst_width, dst_height,
-                                  field_height, field_n, plane, has_mclip);
+            record_compute_sequence(compute_cmd, vk_d, res, dst_width,
+                                    dst_height, field_height, field_n, plane,
+                                    has_mclip);
             compute_cmd.pipelineBarrier(
                 vk::PipelineStageFlagBits::eComputeShader,
                 vk::PipelineStageFlagBits::eTransfer, {}, readback_barrier,
@@ -393,7 +397,7 @@ void ensureRecordedPlaneCommandBuffers(
         }
 
         if (plane_cmds.download == nullptr) {
-            plane_cmds.download = allocatePrimaryCommandBuffer(
+            plane_cmds.download = allocate_primary_command_buffer(
                 device, *res.transfer_command_pool);
         }
         if (!plane_cmds.download_recorded) {
@@ -415,7 +419,7 @@ void ensureRecordedPlaneCommandBuffers(
 
     if (plane_cmds.combined.at(field_n) == nullptr) {
         plane_cmds.combined.at(field_n) =
-            allocatePrimaryCommandBuffer(device, *res.compute_command_pool);
+            allocate_primary_command_buffer(device, *res.compute_command_pool);
     }
     if (plane_cmds.combined_recorded.at(field_n)) {
         return;
@@ -436,8 +440,8 @@ void ensureRecordedPlaneCommandBuffers(
                                  vk::PipelineStageFlagBits::eComputeShader, {},
                                  transfer_to_compute_barrier, nullptr, nullptr);
 
-    recordComputeSequence(combined_cmd, vk_d, res, dst_width, dst_height,
-                          field_height, field_n, plane, has_mclip);
+    record_compute_sequence(combined_cmd, vk_d, res, dst_width, dst_height,
+                            field_height, field_n, plane, has_mclip);
 
     combined_cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
                                  vk::PipelineStageFlagBits::eTransfer, {},
@@ -502,11 +506,11 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
         }
 
         int err = 0;
-        const int fieldBased = vsapi->mapGetIntSaturated(
+        const int field_based = vsapi->mapGetIntSaturated(
             vsapi->getFramePropertiesRO(src), "_FieldBased", 0, &err);
-        if (fieldBased == 1) {
+        if (field_based == 1) {
             field = 0;
-        } else if (fieldBased == 2) {
+        } else if (field_based == 2) {
             field = 1;
         }
 
@@ -599,7 +603,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
             }
         }
 
-        auto ensureDescriptorSets = [&](eedi3vk::FrameResources& plane_res) {
+        auto ensure_descriptor_sets = [&](eedi3vk::FrameResources& plane_res) {
             if (!plane_res.descriptor_sets.empty()) {
                 return;
             }
@@ -607,7 +611,7 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
             auto& device = vk_d->context->getDevice();
             auto add_set = [&](vk::raii::DescriptorSet&& set,
                                std::span<const vk::Buffer> buffers) {
-                updateDescriptorSet(*device, *set, buffers);
+                update_descriptor_set(*device, *set, buffers);
                 plane_res.descriptor_sets.push_back(std::move(set));
             };
 
@@ -684,9 +688,9 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
                         sizeof(int32_t));
                 }
 
-                ensureDescriptorSets(plane_res);
+                ensure_descriptor_sets(plane_res);
 
-                ensureRecordedPlaneCommandBuffers(
+                ensure_recorded_plane_command_buffers(
                     vk_d, plane_res, plane, field_n, job.plane_height,
                     job.dst_width, job.dst_height, job.field_height, has_mclip,
                     job.need_dmap_readback, use_dedicated_transfer);
@@ -813,10 +817,10 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
 
                 if (d->vcheck > 0) {
                     VSFrame* pad = vsapi->newVideoFrame(
-                        &d->padFormat, job.dst_width + (MARGIN_H * 2),
+                        &d->pad_format, job.dst_width + (MARGIN_H * 2),
                         job.dst_height + (MARGIN_V * 2), nullptr, core);
 
-                    copyPad(src, pad, plane, d->dh, 1 - field_n, vsapi);
+                    copy_pad(src, pad, plane, d->dh, 1 - field_n, vsapi);
 
                     const auto* src_ptr_base = reinterpret_cast<const float*>(
                         vsapi->getReadPtr(pad, 0));
@@ -873,16 +877,18 @@ const VSFrame* VS_CC eedi3GetFrame(int n, int activationReason,
         vsapi->mapSetInt(props, "_FieldBased", 0, maReplace);
 
         if (d->field > 1) {
-            int errNum = 0;
-            int errDen = 0;
-            int64_t durationNum =
-                vsapi->mapGetInt(props, "_DurationNum", 0, &errNum);
-            int64_t durationDen =
-                vsapi->mapGetInt(props, "_DurationDen", 0, &errDen);
-            if ((errNum == 0) && (errDen == 0)) {
-                vsh::muldivRational(&durationNum, &durationDen, 1, 2);
-                vsapi->mapSetInt(props, "_DurationNum", durationNum, maReplace);
-                vsapi->mapSetInt(props, "_DurationDen", durationDen, maReplace);
+            int err_num = 0;
+            int err_den = 0;
+            int64_t duration_num =
+                vsapi->mapGetInt(props, "_DurationNum", 0, &err_num);
+            int64_t duration_den =
+                vsapi->mapGetInt(props, "_DurationDen", 0, &err_den);
+            if ((err_num == 0) && (err_den == 0)) {
+                vsh::muldivRational(&duration_num, &duration_den, 1, 2);
+                vsapi->mapSetInt(props, "_DurationNum", duration_num,
+                                 maReplace);
+                vsapi->mapSetInt(props, "_DurationDen", duration_den,
+                                 maReplace);
             }
         }
 
@@ -939,7 +945,7 @@ void VS_CC eedi3Create(const VSMap* in, VSMap* out,
             throw "only constant format 32 bit float input supported"s;
         }
 
-        vsapi->queryVideoFormat(&d->padFormat, cfGray, d->vi.format.sampleType,
+        vsapi->queryVideoFormat(&d->pad_format, cfGray, d->vi.format.sampleType,
                                 d->vi.format.bitsPerSample, 0, 0, core);
 
         d->field = vsapi->mapGetIntSaturated(in, "field", 0, nullptr);
@@ -1080,7 +1086,7 @@ void VS_CC eedi3Create(const VSMap* in, VSMap* out,
             }
         }
 
-        d->remainingWeight = 1.0F - d->alpha - d->beta;
+        d->remaining_weight = 1.0F - d->alpha - d->beta;
         if (d->cost3) {
             d->alpha /= 3.0F;
         }
@@ -1093,9 +1099,9 @@ void VS_CC eedi3Create(const VSMap* in, VSMap* out,
         vk_d->pipelines = std::make_unique<eedi3vk::EEDI3Pipelines>(
             *vk_d->context, d->tpitch);
 
-        d->rcpVthresh0 = 1.0F / vthresh0;
-        d->rcpVthresh1 = 1.0F / vthresh1;
-        d->rcpVthresh2 = 1.0F / d->vthresh2;
+        d->rcp_vthresh0 = 1.0F / vthresh0;
+        d->rcp_vthresh1 = 1.0F / vthresh1;
+        d->rcp_vthresh2 = 1.0F / d->vthresh2;
 
         if (d->field > 1) {
             d->vi.numFrames *= 2;

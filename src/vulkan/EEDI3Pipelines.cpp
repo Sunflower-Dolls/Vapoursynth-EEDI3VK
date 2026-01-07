@@ -18,7 +18,7 @@ EEDI3Pipelines::EEDI3Pipelines(VulkanContext& ctx, int tpitch) : context(ctx) {
              vk::ShaderStageFlagBits::eCompute},
         }};
         copy_field = std::make_unique<VulkanComputePipeline>(
-            context, shaders::getCopyFieldSpv(), bindings,
+            context, shaders::get_copy_field_spv(), bindings,
             sizeof(CopyFieldParams));
     }
 
@@ -31,7 +31,7 @@ EEDI3Pipelines::EEDI3Pipelines(VulkanContext& ctx, int tpitch) : context(ctx) {
              vk::ShaderStageFlagBits::eCompute},
         }};
         dilate_mask = std::make_unique<VulkanComputePipeline>(
-            context, shaders::getDilateMaskSpv(), bindings,
+            context, shaders::get_dilate_mask_spv(), bindings,
             sizeof(DilateMaskParams));
     }
 
@@ -46,7 +46,7 @@ EEDI3Pipelines::EEDI3Pipelines(VulkanContext& ctx, int tpitch) : context(ctx) {
              vk::ShaderStageFlagBits::eCompute},
         }};
         calc_costs = std::make_unique<VulkanComputePipeline>(
-            context, shaders::getCalcCostsSpv(), bindings,
+            context, shaders::get_calc_costs_spv(), bindings,
             sizeof(CalcCostsParams));
     }
 
@@ -85,7 +85,7 @@ EEDI3Pipelines::EEDI3Pipelines(VulkanContext& ctx, int tpitch) : context(ctx) {
         spec_info.pData = &spec_data;
 
         viterbi_scan = std::make_unique<VulkanComputePipeline>(
-            context, shaders::getViterbiScanSpv(), bindings,
+            context, shaders::get_viterbi_scan_spv(), bindings,
             sizeof(ViterbiScanParams), &spec_info);
     }
 
@@ -102,7 +102,7 @@ EEDI3Pipelines::EEDI3Pipelines(VulkanContext& ctx, int tpitch) : context(ctx) {
              vk::ShaderStageFlagBits::eCompute},
         }};
         interpolate = std::make_unique<VulkanComputePipeline>(
-            context, shaders::getInterpolateSpv(), bindings,
+            context, shaders::get_interpolate_spv(), bindings,
             sizeof(InterpolateParams));
     }
 
@@ -115,7 +115,7 @@ EEDI3Pipelines::EEDI3Pipelines(VulkanContext& ctx, int tpitch) : context(ctx) {
              vk::ShaderStageFlagBits::eCompute},
         }};
         copy_buffer = std::make_unique<VulkanComputePipeline>(
-            context, shaders::getCopyBufferSpv(), bindings,
+            context, shaders::get_copy_buffer_spv(), bindings,
             sizeof(CopyBufferParams));
     }
 }
